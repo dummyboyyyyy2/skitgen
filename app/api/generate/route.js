@@ -2,6 +2,7 @@ import { safeJSONParse } from "@/lib/gemini";
 import { callAI, DEFAULT_PROVIDER, isValidProvider } from "@/lib/ai";
 import {
   COMEDY_PROFILE,
+  COMEDY_VERIFIER,
   buildIdeaPrompt,
   buildTonePrompt,
   buildRefinePrompt,
@@ -70,10 +71,10 @@ export async function POST(req) {
         const verifyTokenBudget = Math.max(500, Math.round(scriptTokenBudget * 0.7));
         const verifiedAI = await callAI({
           provider,
-          system: COMEDY_PROFILE,
+          system: COMEDY_VERIFIER,
           prompt: buildScriptVerificationPrompt(text, avoidNotes, prompt),
           maxTokens: verifyTokenBudget,
-          options: { temperature: 0.15, retries: 2 },
+          options: { temperature: 0.3, retries: 2 },
         });
         return Response.json({
           result: verifiedAI.text || text,
