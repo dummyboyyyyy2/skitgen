@@ -284,8 +284,24 @@ function parseJSON(text) {
     const clean = text.replace(/```json\s*/gi, "").replace(/```\s*/gi, "").trim();
     return JSON.parse(clean);
   } catch {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (match) { try { return JSON.parse(match[0]); } catch {} }
+    // Fallback rescue must handle array responses ([...]) as well as object
+    // responses ({...}) — generateIdeas() expects a top-level array, every
+    // other caller here expects an object. Mirrors Solo's safeJSONParse
+    // (lib/gemini.js), which already covers both.
+    try {
+      const start = Math.min(
+        ...["{", "["].map((c) => {
+          const i = text.indexOf(c);
+          return i === -1 ? Infinity : i;
+        })
+      );
+      const endBrace = text.lastIndexOf("}");
+      const endBracket = text.lastIndexOf("]");
+      const end = Math.max(endBrace, endBracket);
+      if (start !== Infinity && end !== -1) {
+        return JSON.parse(text.slice(start, end + 1));
+      }
+    } catch {}
     return null;
   }
 }
@@ -383,6 +399,7 @@ function ResultCard({ result, onRefine, refining, onSave, saved, onAvoid, avoidS
   const [tab, setTab] = useState("script");
   const [showAvoid, setShowAvoid] = useState(false);
   const [avoidReason, setAvoidReason] = useState("");
+  const [customRefine, setCustomRefine] = useState("");
 
   const scriptText = result.script || "";
   const postText = `${result.caption || ""}\n\n${(result.hashtags || []).map(h => `#${h.replace(/^#/, "")}`).join(" ")}`;
@@ -587,6 +604,26 @@ function ResultCard({ result, onRefine, refining, onSave, saved, onAvoid, avoidS
             </button>
           ))}
         </div>
+        <textarea
+          value={customRefine}
+          onChange={(e) => setCustomRefine(e.target.value)}
+          placeholder="Make the ending crazier..."
+          rows={2}
+          disabled={refining}
+          style={{ width: "100%", boxSizing: "border-box", resize: "vertical", border: `1px solid ${C.border}`, borderRadius: "8px", padding: "10px 12px", fontSize: "12px", fontFamily: "inherit", color: C.dark, background: C.white, outline: "none", marginTop: "10px", marginBottom: "8px", lineHeight: 1.5 }}
+        />
+        <button
+          onClick={() => { if (!refining && customRefine.trim()) { onRefine("custom", customRefine.trim()); setCustomRefine(""); } }}
+          disabled={refining || !customRefine.trim()}
+          style={{
+            width: "100%", border: "none", background: C.pink, color: C.ink, borderRadius: "8px",
+            padding: "9px", fontSize: "12px", fontWeight: 700, fontFamily: "inherit",
+            cursor: refining || !customRefine.trim() ? "not-allowed" : "pointer",
+            opacity: refining || !customRefine.trim() ? 0.5 : 1,
+          }}
+        >
+          {refining ? "Rewriting ···" : "✦ Rewrite"}
+        </button>
       </div>
     </div>
   );
@@ -627,31 +664,107 @@ function SavedPanel({ ideas, onOpen, onDelete, onClose }) {
 }
 
 // ─── DNA TRAINER COMPONENT ─────────────────────────────────────────────────
+// Layout mirrors Solo's ComedyDNAView (app/page.js) — same card structure,
+// section labels, sample cards, and structured DNA display — kept
+// self-contained here since Couple's samples/DNA live behind separate
+// /api/couple/* routes. No positive/negative/neutral labeling on samples;
+// every sample is treated as evidence and the API defaults its stored
+// `type` to "positive" (see /api/couple/samples).
 
-const SAMPLE_TYPES = [
-  { id: "positive", label: "✓ Works / I like this", color: C.green },
-  { id: "negative", label: "✗ Doesn't work / I dislike this", color: "#f0575f" }, // = var(--danger)
-  { id: "neutral", label: "~ Just an example", color: C.purple },
-];
+const DNA_C = {
+  textFaint: "#3d3d3d",
+  warning: "#f2a93b",
+  warningDim: "#2a2010",
+  danger: "#f0575f",
+  dangerDim: "#2a1114",
+};
 
-function DnaTrainer({ dnaProfile, onProfileUpdate, provider }) {
+const dnaCard = { background: C.white, border: `1px solid ${C.border}`, borderRadius: "10px", padding: "20px 22px" };
+const dnaLabel = { fontSize: "11px", letterSpacing: "1.5px", color: C.muted, display: "block", marginBottom: "12px", fontWeight: 600 };
+const dnaChip = { padding: "5px 14px", borderRadius: "20px", fontSize: "11px", background: C.bg, color: C.mid, border: `1px solid ${C.border}` };
+
+function DnaPrimaryButton({ children, disabled, onClick, style }) {
+  return (
+    <button onClick={onClick} disabled={disabled} style={{
+      padding: "15px", borderRadius: "8px", border: "1px solid transparent",
+      fontSize: "13px", fontWeight: 700, letterSpacing: "1.5px", textTransform: "uppercase",
+      background: disabled ? C.border : C.purple, color: disabled ? C.muted : C.ink,
+      cursor: disabled ? "not-allowed" : "pointer", fontFamily: "inherit", ...style,
+    }}>{children}</button>
+  );
+}
+
+function DnaSecondaryButton({ children, disabled, onClick, style }) {
+  return (
+    <button onClick={onClick} disabled={disabled} style={{
+      padding: "11px 18px", borderRadius: "8px", fontSize: "12px", fontWeight: 700,
+      border: `1px solid ${C.border}`, background: "transparent", color: C.dark,
+      cursor: disabled ? "not-allowed" : "pointer", fontFamily: "inherit", ...style,
+    }}>{children}</button>
+  );
+}
+
+function DnaGhostButton({ children, disabled, onClick, style, danger = false }) {
+  return (
+    <button onClick={onClick} disabled={disabled} style={{
+      padding: "8px 4px", fontSize: "12px", fontWeight: 500,
+      border: "none", background: "transparent", color: danger ? DNA_C.danger : C.muted,
+      cursor: disabled ? "not-allowed" : "pointer", fontFamily: "inherit", ...style,
+    }}>{children}</button>
+  );
+}
+
+function DnaStatBar({ label, value }) {
+  const pct = Math.max(0, Math.min(10, value || 0)) * 10;
+  return (
+    <div style={{ marginBottom: "10px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "5px" }}>
+        <span style={{ fontSize: "13px", color: C.mid, textTransform: "capitalize" }}>{String(label).replace(/_/g, " ")}</span>
+        <span style={{ fontSize: "12px", color: C.muted }}>{value || 0}/10</span>
+      </div>
+      <div style={{ height: "6px", background: C.bg, borderRadius: "3px", overflow: "hidden" }}>
+        <div style={{ height: "100%", width: `${pct}%`, background: C.purple, borderRadius: "3px", transition: "width 0.3s" }} />
+      </div>
+    </div>
+  );
+}
+
+function DnaSampleStatusBadge({ sample, isIncluded }) {
+  if (sample.analysis_error) {
+    return <span style={{ fontSize: "11px", color: DNA_C.danger, fontWeight: 600 }}>! ANALYSIS FAILED</span>;
+  }
+  if (!sample.analysis) {
+    return <span style={{ fontSize: "11px", color: DNA_C.warning, fontWeight: 600 }}>○ NEEDS ANALYSIS</span>;
+  }
+  if (isIncluded) {
+    return <span style={{ fontSize: "11px", color: C.green, fontWeight: 600 }}>✓ IN DNA</span>;
+  }
+  return <span style={{ fontSize: "11px", color: C.mid, fontWeight: 600 }}>✓ ANALYZED</span>;
+}
+
+function DnaTrainer({ dnaProfile, onProfileUpdate, provider, avoidNotes = [], deleteAvoidNote }) {
   const [samples, setSamples] = useState([]);
   const [loadingSamples, setLoadingSamples] = useState(true);
+  const [sampleTitle, setSampleTitle] = useState("");
+  const [sampleNotes, setSampleNotes] = useState("");
   const [input, setInput] = useState("");
-  const [sampleType, setSampleType] = useState("positive");
   const [sampleFormat, setSampleFormat] = useState(null); // null = "Unspecified"
+  const [addingSample, setAddingSample] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [buildingDNA, setBuildingDNA] = useState(false);
   const [analyzeMsg, setAnalyzeMsg] = useState("");
   const [err, setErr] = useState(null);
-  const [showProfile, setShowProfile] = useState(!!dnaProfile);
   const [includedSampleIds, setIncludedSampleIds] = useState([]);
   const [dnaNeedsRebuild, setDnaNeedsRebuild] = useState(false);
+  const [expandedSampleId, setExpandedSampleId] = useState(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [copiedSampleId, setCopiedSampleId] = useState(null);
   const msgRef = useRef(null);
 
   const ANALYZE_MSGS = [
     "Studying the comedy instincts...",
     "Looking for the pattern behind the pattern...",
-    "Finding what makes this creator tick...",
+    "Finding what makes this couple tick...",
     "Mapping the humor DNA...",
     "Building the taste profile...",
     "Identifying the specific behavior...",
@@ -694,12 +807,19 @@ function DnaTrainer({ dnaProfile, onProfileUpdate, provider }) {
     try {
       const res = await fetch("/api/couple/samples", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, type: sampleType, format: sampleFormat }),
+        body: JSON.stringify({
+          text,
+          title: sampleTitle.trim() || `Couple sample ${samples.length + 1}`,
+          notes: sampleNotes.trim(),
+          format: sampleFormat,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || `Failed to save sample (${res.status})`);
       setSamples(prev => [...prev, data.sample]);
       setInput("");
+      setSampleTitle("");
+      setSampleNotes("");
       setSampleFormat(null);
     } catch (e) { setErr(e.message || "Failed to save sample."); }
   };
@@ -736,36 +856,72 @@ function DnaTrainer({ dnaProfile, onProfileUpdate, provider }) {
     return data;
   };
 
-  const analyze = async () => {
-    if (samples.length === 0) return;
-
-    // Cap check — block before spending any analysis calls, with an
-    // actionable message, rather than silently dropping/rotating samples.
-    // Mirrors Solo's split: a full build/rebuild cares about the whole
-    // corpus, an incremental update only cares about what it'd add on top
-    // of what's already trained. forceFull here is a pre-check using the
-    // same condition the real forceFull below is computed from — dnaProfile
-    // and dnaNeedsRebuild don't change during this function.
-    const wouldForceFull = !dnaProfile || dnaNeedsRebuild;
-    if (wouldForceFull) {
-      if (samples.length > MAX_TRAINING_SAMPLES) {
-        setErr(
-          `You have ${samples.length} samples, over the ${MAX_TRAINING_SAMPLES}-sample training cap. ` +
-          `Delete ${samples.length - MAX_TRAINING_SAMPLES} sample${samples.length - MAX_TRAINING_SAMPLES === 1 ? "" : "s"} (keep your strongest/most representative ones) before training.`
-        );
-        return;
-      }
-    } else {
-      const newSampleCount = samples.filter((s) => !includedSampleIds.includes(s.id)).length;
-      const totalAfter = includedSampleIds.length + newSampleCount;
-      if (totalAfter > MAX_TRAINING_SAMPLES) {
-        setErr(
-          `Training on these ${newSampleCount} new sample${newSampleCount === 1 ? "" : "s"} would put you at ${totalAfter}, over the ${MAX_TRAINING_SAMPLES}-sample cap. ` +
-          `Delete ${totalAfter - MAX_TRAINING_SAMPLES} older/weaker sample${totalAfter - MAX_TRAINING_SAMPLES === 1 ? "" : "s"} first before training on these new ones.`
-        );
-        return;
-      }
+  // Analyzes a single sample and patches the result to the DB + local state.
+  // Shared by the bulk analyze() loop below and the per-sample reanalyze button.
+  const analyzeOneSample = async (sample, label) => {
+    const formatObj = sample.format ? FORMATS.find(f => f.id === sample.format) : null;
+    try {
+      const data = await dnaAction({
+        action: "analyzeSample",
+        content: sample.text,
+        title: sample.title || label || "Couple sample",
+        sampleType: sample.type,
+        formatLabel: formatObj?.label || null,
+        formatDesc: formatObj?.desc || null,
+      }, 1800);
+      const patchRes = await fetch(`/api/couple/samples/${encodeURIComponent(sample.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ analysis: data.analysis, analysisError: "" }),
+      });
+      const patchData = await patchRes.json().catch(() => ({}));
+      if (!patchRes.ok) throw new Error(patchData?.error || "Failed to save sample analysis.");
+      setSamples(prev => prev.map(x => x.id === sample.id ? patchData.sample : x));
+      return patchData.sample;
+    } catch (sampleErr) {
+      const msg = sampleErr?.message || "Analysis failed.";
+      await fetch(`/api/couple/samples/${encodeURIComponent(sample.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ analysisError: msg }),
+      }).catch(() => {});
+      throw sampleErr instanceof Error ? sampleErr : new Error(msg);
     }
+  };
+
+  const reanalyzeSample = async (sample) => {
+    if (analyzing || buildingDNA) return;
+    setErr(null);
+    setAnalyzeMsg(`Reanalyzing "${sample.title || "sample"}"...`);
+    try {
+      const resetRes = await fetch(`/api/couple/samples/${encodeURIComponent(sample.id)}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resetAnalysis: true }),
+      });
+      const resetData = await resetRes.json().catch(() => ({}));
+      if (!resetRes.ok) throw new Error(resetData?.error || "Failed to reset sample.");
+      setSamples(prev => prev.map(x => x.id === sample.id ? resetData.sample : x));
+      await analyzeOneSample(resetData.sample);
+      setIncludedSampleIds(prev => prev.filter(id => id !== sample.id));
+      setDnaNeedsRebuild(true);
+      setAnalyzeMsg(`"${sample.title || "Sample"}" reanalyzed successfully.`);
+    } catch (e) {
+      setErr(e.message || "Reanalysis failed.");
+    }
+  };
+
+  const handleCopySample = (sample) => {
+    navigator.clipboard?.writeText(sample.text || "");
+    setCopiedSampleId(sample.id);
+    setTimeout(() => setCopiedSampleId(null), 2000);
+  };
+
+  // Step 1 of Training: analyze every sample that doesn't have an analysis
+  // yet. Mirrors Solo's analyzeAllPending() — no DNA build here.
+  const analyzeAllPending = async () => {
+    if (analyzing || buildingDNA) return;
+    const pending = samples.filter((s) => !s.analysis);
+    if (pending.length === 0) return;
 
     setAnalyzing(true);
     setErr(null);
@@ -773,60 +929,77 @@ function DnaTrainer({ dnaProfile, onProfileUpdate, provider }) {
     msgRef.current = setInterval(() => setAnalyzeMsg(pick(ANALYZE_MSGS)), 2200);
 
     try {
-      // First make sure every sample has an individual analysis. This mirrors
-      // Solo and means the eventual DNA merge only needs compact analyses.
       let working = [...samples];
       for (let i = 0; i < working.length; i++) {
         if (working[i].analysis && !working[i].analysis_error) continue;
         setAnalyzeMsg(`Analyzing sample ${i + 1} of ${working.length}...`);
         const s = working[i];
-        const formatObj = s.format ? FORMATS.find(f => f.id === s.format) : null;
         try {
-          const data = await dnaAction({
-            action: "analyzeSample",
-            content: s.text,
-            title: `Couple sample ${i + 1}`,
-            sampleType: s.type,
-            formatLabel: formatObj?.label || null,
-            formatDesc: formatObj?.desc || null,
-          }, 1800);
-          const patchRes = await fetch(`/api/couple/samples/${encodeURIComponent(s.id)}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ analysis: data.analysis, analysisError: "" }),
-          });
-          const patchData = await patchRes.json().catch(() => ({}));
-          if (!patchRes.ok) throw new Error(patchData?.error || "Failed to save sample analysis.");
-          working[i] = patchData.sample;
-          setSamples(prev => prev.map(x => x.id === s.id ? patchData.sample : x));
+          working[i] = await analyzeOneSample(s, `Couple sample ${i + 1}`);
         } catch (sampleErr) {
-          const msg = sampleErr?.message || "Analysis failed.";
-          await fetch(`/api/couple/samples/${encodeURIComponent(s.id)}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ analysisError: msg }),
-          }).catch(() => {});
-          throw new Error(`Sample ${i + 1} analysis failed: ${msg}`);
+          throw new Error(`Sample ${i + 1} analysis failed: ${sampleErr?.message || "Analysis failed."}`);
         }
       }
+      setDnaNeedsRebuild(true);
+      setAnalyzeMsg(`Analyzed ${pending.length} new sample${pending.length === 1 ? "" : "s"}.`);
+    } catch (e) {
+      setErr(e.message || "Analysis failed. Please try again.");
+    } finally {
+      clearInterval(msgRef.current);
+      setAnalyzing(false);
+    }
+  };
 
-      const ready = working.filter(s => s.analysis);
-      if (!ready.length) throw new Error("No samples could be analyzed.");
+  // Step 2 of Training: build/update Comedy DNA from already-analyzed
+  // samples. Separate from analyzeAllPending() so each step is visible and
+  // can be retried independently — mirrors Solo's split analyze/build flow.
+  const buildDna = async (manualForceFull = false) => {
+    if (analyzing || buildingDNA) return;
+    const ready = samples.filter((s) => s.analysis);
+    if (!ready.length) {
+      setErr("No analyzed samples yet. Analyze your samples first.");
+      return;
+    }
 
-      const forceFull = !dnaProfile || dnaNeedsRebuild;
-      const newSamples = ready.filter(s => !includedSampleIds.includes(s.id));
-      if (!forceFull && newSamples.length === 0) {
-        setAnalyzeMsg("Comedy DNA is already up to date.");
-        setShowProfile(true);
+    const forceFull = manualForceFull || !dnaProfile || dnaNeedsRebuild;
+    const newSamples = ready.filter((s) => !includedSampleIds.includes(s.id));
+
+    if (!forceFull && newSamples.length === 0) {
+      setAnalyzeMsg("Comedy DNA is already up to date.");
+      return;
+    }
+
+    // Cap check — block before spending a call, with an actionable message,
+    // rather than silently dropping/rotating samples on the user's behalf.
+    if (forceFull) {
+      if (ready.length > MAX_TRAINING_SAMPLES) {
+        setErr(
+          `You have ${ready.length} analyzed samples, over the ${MAX_TRAINING_SAMPLES}-sample training cap. ` +
+          `Delete ${ready.length - MAX_TRAINING_SAMPLES} sample${ready.length - MAX_TRAINING_SAMPLES === 1 ? "" : "s"} (keep your strongest/most representative ones) before training.`
+        );
         return;
       }
+    } else {
+      const totalAfter = includedSampleIds.length + newSamples.length;
+      if (totalAfter > MAX_TRAINING_SAMPLES) {
+        setErr(
+          `Training on these ${newSamples.length} new sample${newSamples.length === 1 ? "" : "s"} would put you at ${totalAfter}, over the ${MAX_TRAINING_SAMPLES}-sample cap. ` +
+          `Delete ${totalAfter - MAX_TRAINING_SAMPLES} older/weaker sample${totalAfter - MAX_TRAINING_SAMPLES === 1 ? "" : "s"} first, or use "full rebuild from all samples" after pruning.`
+        );
+        return;
+      }
+    }
 
+    setBuildingDNA(true);
+    setErr(null);
+
+    try {
       const chosen = forceFull ? ready : newSamples;
       const analyses = chosen.map((s) => {
         const formatObj = s.format ? FORMATS.find(f => f.id === s.format) : null;
         return {
           id: s.id,
-          title: `Couple sample ${s.id}`,
+          title: s.title || `Couple sample ${s.id}`,
           type: s.type,
           formatLabel: formatObj?.label || null,
           formatDesc: formatObj?.desc || null,
@@ -861,193 +1034,446 @@ function DnaTrainer({ dnaProfile, onProfileUpdate, provider }) {
       onProfileUpdate(saveData.dna);
       setIncludedSampleIds(saveData.includedSampleIds || coveredIds);
       setDnaNeedsRebuild(false);
-      setShowProfile(true);
       setAnalyzeMsg(forceFull
         ? `Comedy DNA built from ${ready.length} samples.`
         : `Comedy DNA updated with ${newSamples.length} new sample${newSamples.length === 1 ? "" : "s"}.`);
     } catch (e) {
-      setErr(e.message || "Analysis failed. Please try again.");
+      setErr(e.message || "DNA update failed. Your samples and analyses are safe — try again.");
     } finally {
-      clearInterval(msgRef.current);
-      setAnalyzing(false);
+      setBuildingDNA(false);
     }
   };
 
   const clearAll = async () => {
+    if (analyzing || buildingDNA) return;
     try {
       const res = await fetch("/api/couple/samples", { method: "DELETE" });
-      // The route intentionally supports bulk clear for the DNA reset flow.
       if (!res.ok) throw new Error("Failed to clear samples.");
       await fetch("/api/couple/dna", { method: "DELETE" });
       setSamples([]);
       setIncludedSampleIds([]);
       setDnaNeedsRebuild(false);
       onProfileUpdate(null);
-      setShowProfile(false);
     } catch (e) { setErr(e.message || "Failed to clear Comedy DNA."); }
   };
 
-  const typeColor = (type) => SAMPLE_TYPES.find(t => t.id === type)?.color || C.muted;
+  const handleDeleteClick = (id) => {
+    if (confirmDeleteId === id) {
+      deleteSample(id);
+      setConfirmDeleteId(null);
+    } else {
+      setConfirmDeleteId(id);
+    }
+  };
+
+  const dna = dnaProfile;
+  const sampleCount = samples.length;
+  const newSampleCount = samples.filter((s) => s.analysis && !includedSampleIds.includes(s.id)).length;
+  const unanalyzedCount = samples.filter((s) => !s.analysis).length;
+  const analyzedCount = samples.filter((s) => s.analysis).length;
+  const warningLevel = sampleCount > 25 ? "high" : sampleCount > 20 ? "mid" : null;
 
   return (
-    <div style={{ maxWidth: "900px", margin: "0 auto", padding: "16px" }}>
-
-      {/* Intro */}
-      <div style={{ background: C.white, borderRadius: "10px", padding: "18px", marginBottom: "12px", border: "1px solid var(--border-soft)" }}>
-        <div style={{ fontSize: "16px", fontWeight: 800, color: C.dark, marginBottom: "6px" }}>🧬 Comedy DNA Trainer</div>
-        <div style={{ fontSize: "13px", color: C.muted, lineHeight: 1.7 }}>
-          Feed the AI your comedy samples — scripts, ideas, dialogue, captions, descriptions. It will analyze each sample, learn your recurring comedic instincts, and build structured Comedy DNA that makes every generated script feel more like <em>you</em>.
-          <br /><strong style={{ color: C.dark }}>Negative examples are just as valuable as positive ones.</strong> They define your edges.
+    <div>
+      <div style={{ marginBottom: "10px" }}>
+        <span style={dnaLabel}>01 — SAMPLES · 02 — TRAINING · 03 — YOUR DNA</span>
+      </div>
+      <div style={{ marginBottom: "28px" }}>
+        <div style={{ fontSize: "16px", fontWeight: "700", color: "#fff", marginBottom: "6px" }}>Comedy DNA Trainer</div>
+        <div style={{ fontSize: "13px", color: C.mid, lineHeight: "1.6" }}>
+          Feed the AI your comedy samples — scripts, ideas, dialogue, captions, descriptions — and it will learn this couple's recurring comedic instincts.
         </div>
-        {dnaProfile && (
-          <div style={{ marginTop: "10px", padding: "8px 12px", borderRadius: "10px", background: `${C.green}15`, display: "flex", alignItems: "center", gap: "8px" }}>
-            <span style={{ fontSize: "13px", color: C.green, fontWeight: 700 }}>✓ Comedy DNA active</span>
-            <span style={{ fontSize: "12px", color: C.muted }}>— injected into every generation</span>
+      </div>
+
+      {/* ---- DNA dashboard ---- */}
+      <div style={{ ...dnaCard, marginBottom: "18px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "18px" }}>
+          <div>
+            <div style={{ ...dnaLabel, marginBottom: "8px" }}>COMEDY DNA</div>
+            <div style={{ fontSize: "13px", color: C.mid, lineHeight: "1.7" }}>
+              {sampleCount} sample{sampleCount === 1 ? "" : "s"} added<br />
+              <span style={{ color: includedSampleIds.length >= MAX_TRAINING_SAMPLES ? DNA_C.warning : C.mid, fontWeight: includedSampleIds.length >= MAX_TRAINING_SAMPLES ? 700 : 400 }}>
+                {includedSampleIds.length} / {MAX_TRAINING_SAMPLES} sample{includedSampleIds.length === 1 ? "" : "s"} trained
+                {includedSampleIds.length >= MAX_TRAINING_SAMPLES ? " — cap reached" : ""}
+              </span>
+            </div>
+          </div>
+          {dna && (
+            <div>
+              <div style={{ ...dnaLabel, marginBottom: "8px" }}>CONFIDENCE</div>
+              <div style={{ fontSize: "22px", fontWeight: 800, color: "#fff" }}>{dna.training_confidence || "?"}<span style={{ fontSize: "13px", color: DNA_C.textFaint, fontWeight: 500 }}> / 10</span></div>
+            </div>
+          )}
+          <div style={{ display: "flex", alignItems: "center", gap: "7px" }}>
+            <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: !dna ? DNA_C.textFaint : (newSampleCount > 0 || dnaNeedsRebuild ? DNA_C.warning : C.green), display: "inline-block" }} />
+            <span style={{ fontSize: "11px", fontWeight: 700, color: !dna ? DNA_C.textFaint : (newSampleCount > 0 || dnaNeedsRebuild ? DNA_C.warning : C.green) }}>
+              {!dna ? "NO DNA YET" : (newSampleCount > 0 || dnaNeedsRebuild) ? `${newSampleCount} NEW, NOT MERGED` : "UP TO DATE"}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {warningLevel && (
+        <div style={{
+          fontSize: "12px", color: DNA_C.warning, background: DNA_C.warningDim, border: "1px solid #3a2f10",
+          borderRadius: "8px", padding: "12px 16px", marginBottom: "18px", lineHeight: "1.5",
+        }}>
+          More samples aren't automatically better. You're at {sampleCount} — add scripts that reveal a different side of this couple's comedy, not more of the same.
+        </div>
+      )}
+
+      {/* ---- 01 Samples: add ---- */}
+
+      {avoidNotes?.length > 0 && (
+        <div style={{ ...dnaCard, marginBottom: "18px", borderLeft: `3px solid ${DNA_C.danger}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+            <div style={{ fontSize: "11px", letterSpacing: "1.5px", color: C.muted, fontWeight: 700 }}>AVOID LIST</div>
+            <span style={{ fontSize: "10px", color: DNA_C.textFaint }}>{avoidNotes.length}/15</span>
+          </div>
+          {avoidNotes.map((n) => (
+            <div key={n.id} style={{ display: "flex", gap: "10px", alignItems: "flex-start", padding: "8px 0", borderTop: `1px solid ${C.border}` }}>
+              <div style={{ flex: 1, fontSize: "12px", color: C.mid, lineHeight: "1.6" }}>— {n.note}</div>
+              <button onClick={() => deleteAvoidNote(n.id)} style={{ border: "none", background: "transparent", color: C.muted, fontSize: "17px", cursor: "pointer", lineHeight: 1, padding: "0 2px" }} aria-label="Delete Avoid note">×</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ ...dnaCard, marginBottom: "18px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: addingSample ? "16px" : 0 }}>
+          <span style={dnaLabel}>ADD COMEDY SAMPLE</span>
+          <DnaSecondaryButton onClick={() => setAddingSample(!addingSample)} style={{ padding: "7px 14px", fontSize: "11px" }}>
+            {addingSample ? "cancel" : "+ add"}
+          </DnaSecondaryButton>
+        </div>
+        {addingSample && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            <div>
+              <div style={{ fontSize: "12px", color: C.mid, marginBottom: "6px" }}>What should I call it?</div>
+              <input
+                value={sampleTitle}
+                onChange={e => setSampleTitle(e.target.value)}
+                placeholder="e.g. 'One of our best deadpan bits'"
+                style={{ width: "100%", background: C.bg, border: `1px solid ${C.border}`, borderRadius: "8px", color: C.dark, fontSize: "16px", padding: "12px 16px", outline: "none", boxSizing: "border-box", fontFamily: "inherit" }}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: "12px", color: C.mid, marginBottom: "6px" }}>What makes this representative?</div>
+              <input
+                value={sampleNotes}
+                onChange={e => setSampleNotes(e.target.value)}
+                placeholder="Optional — e.g. 'Funny but experimental'"
+                style={{ width: "100%", background: C.bg, border: `1px solid ${C.border}`, borderRadius: "8px", color: C.dark, fontSize: "16px", padding: "12px 16px", outline: "none", boxSizing: "border-box", fontFamily: "inherit" }}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: "12px", color: C.mid, marginBottom: "6px" }}>Paste script, describe a video, or share an idea</div>
+              <textarea
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                placeholder={"Examples:\n• A full script you wrote or filmed\n• 'She asked where to eat. He said anywhere. They went to three places.'\n• A caption that got a lot of tags\n• An idea you thought was funny but wasn't sure why\n• Something that didn't work and why — negative examples are just as valuable"}
+                rows={8}
+                style={{ width: "100%", background: C.bg, border: `1px solid ${C.border}`, borderRadius: "8px", color: C.dark, fontSize: "16px", padding: "12px 16px", outline: "none", boxSizing: "border-box", fontFamily: "inherit", resize: "vertical", lineHeight: "1.6" }}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: "12px", color: C.mid, marginBottom: "6px" }}>Format (optional)</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                <button
+                  type="button"
+                  onClick={() => setSampleFormat(null)}
+                  style={{
+                    padding: "7px 13px", borderRadius: "100px",
+                    border: sampleFormat === null ? `1.5px solid ${C.pink}` : `1px solid ${C.border}`,
+                    background: sampleFormat === null ? `${C.pink}18` : C.bg,
+                    color: sampleFormat === null ? C.pink : C.mid,
+                    fontSize: "11px", fontWeight: sampleFormat === null ? 700 : 500,
+                    cursor: "pointer", fontFamily: "inherit",
+                  }}
+                >
+                  Unspecified
+                </button>
+                {FORMATS.map((f) => {
+                  const selected = sampleFormat === f.id;
+                  return (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => setSampleFormat(f.id)}
+                      style={{
+                        padding: "7px 13px", borderRadius: "100px",
+                        border: selected ? `1.5px solid ${C.pink}` : `1px solid ${C.border}`,
+                        background: selected ? `${C.pink}18` : C.bg,
+                        color: selected ? C.pink : C.mid,
+                        fontSize: "11px", fontWeight: selected ? 700 : 500,
+                        cursor: "pointer", fontFamily: "inherit",
+                      }}
+                    >
+                      {f.emoji} {f.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div style={{ fontSize: "11px", color: DNA_C.textFaint, lineHeight: "1.5" }}>
+              Use samples that represent how you actually want this couple's content to sound.
+            </div>
+            <DnaPrimaryButton onClick={addSample} disabled={!input.trim()}>
+              Add Sample
+            </DnaPrimaryButton>
           </div>
         )}
       </div>
 
-      <div style={{ display: "grid", gap: "12px" }}>
-
-        {/* Add sample */}
-        <div style={{ background: C.white, borderRadius: "10px", padding: "16px", border: "1px solid var(--border-soft)" }}>
-          <span style={sLabel}>Add a Comedy Sample</span>
-          <textarea
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            placeholder={"Paste a script, describe a video, share dialogue, explain an idea...\n\nExamples:\n• A full script you wrote or filmed\n• 'She asked where to eat. He said anywhere. They went to three places.'\n• A caption that got a lot of tags\n• An idea you thought was funny but wasn't sure why\n• Something you saw that felt 'too scripted' for your style"}
-            rows={6}
-            style={{ width: "100%", border: `1.5px solid ${C.border}`, borderRadius: "8px", padding: "11px 13px", fontSize: "14px", lineHeight: 1.65, color: C.dark, resize: "vertical", outline: "none", background: C.bg, marginBottom: "12px" }}
-            onFocus={e => e.target.style.borderColor = C.purple}
-            onBlur={e => e.target.style.borderColor = C.border}
-          />
-
-          <span style={{ ...sLabel, marginBottom: "8px", display: "block" }}>Label this sample</span>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "12px" }}>
-            {SAMPLE_TYPES.map(t => (
-              <button key={t.id} onClick={() => setSampleType(t.id)} style={{
-                padding: "7px 13px", borderRadius: "100px",
-                border: `1.5px solid ${sampleType === t.id ? t.color : C.border}`,
-                background: sampleType === t.id ? `${t.color}18` : C.white,
-                color: sampleType === t.id ? t.color : C.muted,
-                fontSize: "12px", fontWeight: sampleType === t.id ? 700 : 500,
-                cursor: "pointer", fontFamily: "inherit",
-              }}>{t.label}</button>
-            ))}
+      {/* ---- 02 Training ---- */}
+      {sampleCount > 0 && (
+        <div style={{ ...dnaCard, marginBottom: "18px" }}>
+          <span style={{ ...dnaLabel, marginBottom: "14px" }}>TRAINING</span>
+          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+            <DnaPrimaryButton
+              onClick={analyzeAllPending}
+              disabled={analyzing || buildingDNA || unanalyzedCount === 0}
+              style={{ flex: "1 1 auto", minWidth: "160px" }}
+            >
+              {analyzing ? analyzeMsg : unanalyzedCount === 0 ? "All Samples Analyzed" : `Analyze ${unanalyzedCount} New Sample${unanalyzedCount === 1 ? "" : "s"}`}
+            </DnaPrimaryButton>
+            <DnaSecondaryButton
+              onClick={() => buildDna()}
+              disabled={buildingDNA || analyzing || analyzedCount === 0}
+              style={{ flex: "1 1 auto", minWidth: "160px" }}
+            >
+              {buildingDNA ? analyzeMsg || "Updating DNA..." : !dna ? "Build Comedy DNA" : `Update Comedy DNA (${newSampleCount} new)`}
+            </DnaSecondaryButton>
           </div>
 
-          <span style={{ ...sLabel, marginBottom: "8px", display: "block" }}>Format (optional)</span>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "12px" }}>
-            <button onClick={() => setSampleFormat(null)} style={{
-              padding: "7px 13px", borderRadius: "100px",
-              border: `1.5px solid ${sampleFormat === null ? C.purple : C.border}`,
-              background: sampleFormat === null ? `${C.purple}18` : C.white,
-              color: sampleFormat === null ? C.purple : C.muted,
-              fontSize: "12px", fontWeight: sampleFormat === null ? 700 : 500,
-              cursor: "pointer", fontFamily: "inherit",
-            }}>Unspecified</button>
-            {FORMATS.map(f => (
-              <button key={f.id} onClick={() => setSampleFormat(f.id)} style={{
-                padding: "7px 13px", borderRadius: "100px",
-                border: `1.5px solid ${sampleFormat === f.id ? C.purple : C.border}`,
-                background: sampleFormat === f.id ? `${C.purple}18` : C.white,
-                color: sampleFormat === f.id ? C.purple : C.muted,
-                fontSize: "12px", fontWeight: sampleFormat === f.id ? 700 : 500,
-                cursor: "pointer", fontFamily: "inherit",
-              }}>{f.emoji} {f.label}</button>
-            ))}
-          </div>
+          {dna && (
+            <DnaGhostButton
+              onClick={() => buildDna(true)}
+              disabled={buildingDNA || analyzing || analyzedCount === 0}
+              style={{ marginTop: "12px", color: DNA_C.textFaint }}
+            >
+              full rebuild from all {analyzedCount} samples
+            </DnaGhostButton>
+          )}
 
-          <button onClick={addSample} disabled={!input.trim()} style={{
-            padding: "11px 20px", borderRadius: "8px", border: "none",
-            background: input.trim() ? C.purple : C.border,
-            color: input.trim() ? C.ink : C.muted,
-            fontSize: "13px", fontWeight: 700, cursor: input.trim() ? "pointer" : "not-allowed", fontFamily: "inherit",
-          }}>
-            + Add Sample
-          </button>
-        </div>
+          <DnaGhostButton onClick={clearAll} disabled={analyzing || buildingDNA} style={{ marginTop: "12px", color: DNA_C.textFaint }}>
+            reset — clear all samples & Comedy DNA
+          </DnaGhostButton>
 
-        {/* Samples list */}
-        {samples.length > 0 && (
-          <div style={{ background: C.white, borderRadius: "10px", padding: "16px", border: "1px solid var(--border-soft)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-              <span style={{ ...sLabel, color: samples.length >= MAX_TRAINING_SAMPLES ? "#f2a93b" : sLabel.color }}>
-                {samples.length} / {MAX_TRAINING_SAMPLES} Sample{samples.length !== 1 ? "s" : ""} Added
-                {samples.length >= MAX_TRAINING_SAMPLES ? " — cap reached" : ""}
-              </span>
-              <span style={{ fontSize: "11px", color: C.muted }}>
-                {samples.filter(s => s.type === "positive").length} positive · {samples.filter(s => s.type === "negative").length} negative · {samples.filter(s => s.type === "neutral").length} neutral
-              </span>
+          {analyzeMsg && !analyzing && !buildingDNA && (
+            <div style={{
+              marginTop: "12px", padding: "10px 12px", borderRadius: "6px",
+              background: C.bg, border: `1px solid ${C.border}`, fontSize: "12px",
+              color: analyzeMsg.includes("built") || analyzeMsg.includes("updated") || analyzeMsg.includes("Analyzed") ? C.green : C.mid,
+              lineHeight: "1.5",
+            }}>
+              {analyzeMsg}
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-              {samples.map((s, i) => (
-                <div key={s.id} style={{ padding: "11px 13px", borderRadius: "8px", border: `1.5px solid ${typeColor(s.type)}25`, background: `${typeColor(s.type)}08`, display: "flex", gap: "10px", alignItems: "flex-start" }}>
-                  <span style={{ fontSize: "10px", fontWeight: 700, color: typeColor(s.type), minWidth: "20px", paddingTop: "2px" }}>#{i + 1}</span>
-                  <div style={{ flex: 1, fontSize: "13px", color: C.dark, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>
-                    {s.format && (
-                      <span style={{ display: "inline-block", fontSize: "10px", fontWeight: 700, color: C.purple, background: `${C.purple}15`, borderRadius: "100px", padding: "2px 8px", marginBottom: "4px" }}>
-                        {FORMATS.find(f => f.id === s.format)?.label || s.format}
-                      </span>
-                    )}
-                    <div>{s.text.length > 200 ? s.text.slice(0, 200) + "..." : s.text}</div>
+          )}
+        </div>
+      )}
+
+      {err && (
+        <div style={{ color: DNA_C.danger, fontSize: "13px", marginBottom: "18px", padding: "12px 16px", background: DNA_C.dangerDim, border: "1px solid #3a1a1e", borderRadius: "8px" }}>
+          {err}
+        </div>
+      )}
+
+      {/* ---- Samples list ---- */}
+      {sampleCount > 0 && (
+        <div style={{ marginBottom: "32px" }}>
+          <span style={dnaLabel}>SAMPLES ({sampleCount})</span>
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            {samples.map((sample, i) => {
+              const isIncluded = includedSampleIds.includes(sample.id);
+              return (
+                <div key={sample.id} style={dnaCard}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px", flexWrap: "wrap" }}>
+                        <div style={{ fontSize: "14px", fontWeight: "600", color: "#ddd" }}>{sample.title || `Sample ${i + 1}`}</div>
+                        <DnaSampleStatusBadge sample={sample} isIncluded={isIncluded} />
+                        {sample.format && (
+                          <span style={{ ...dnaChip, fontSize: "10px", padding: "3px 10px" }}>
+                            {FORMATS.find((f) => f.id === sample.format)?.label || sample.format}
+                          </span>
+                        )}
+                      </div>
+                      {sample.notes && <div style={{ fontSize: "11px", color: DNA_C.textFaint, marginBottom: "6px", fontStyle: "italic" }}>{sample.notes}</div>}
+                      {sample.analysis ? (
+                        <>
+                          <div style={{ fontSize: "12px", color: C.mid, lineHeight: "1.5", marginBottom: "6px" }}>{sample.analysis.summary}</div>
+                          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                            {sample.analysis.primary_comedy_instinct && (
+                              <span style={{ ...dnaChip, fontSize: "10px", padding: "3px 10px" }}>{sample.analysis.primary_comedy_instinct}</span>
+                            )}
+                            {sample.analysis.representative_strength != null && (
+                              <span style={{ ...dnaChip, fontSize: "10px", padding: "3px 10px" }}>strength {sample.analysis.representative_strength}/10</span>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        sample.analysis_error && (
+                          <div style={{ fontSize: "11px", color: DNA_C.danger, marginTop: "2px", lineHeight: "1.5" }}>
+                            {sample.analysis_error}
+                          </div>
+                        )
+                      )}
+                    </div>
                   </div>
-                  <button onClick={() => deleteSample(s.id)} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: "16px", lineHeight: 1, padding: "0 4px", flexShrink: 0 }}>×</button>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "12px", flexWrap: "wrap", gap: "6px" }}>
+                    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                      <DnaGhostButton onClick={() => handleCopySample(sample)} style={{ color: copiedSampleId === sample.id ? C.green : DNA_C.textFaint }}>
+                        {copiedSampleId === sample.id ? "copied ✓" : "copy"}
+                      </DnaGhostButton>
+                      {sample.analysis && (
+                        <DnaGhostButton onClick={() => setExpandedSampleId(expandedSampleId === sample.id ? null : sample.id)}>
+                          {expandedSampleId === sample.id ? "hide analysis" : "view analysis"}
+                        </DnaGhostButton>
+                      )}
+                      {sample.analysis && (
+                        <DnaGhostButton onClick={() => reanalyzeSample(sample)} disabled={analyzing || buildingDNA}>reanalyze</DnaGhostButton>
+                      )}
+                    </div>
+                    <DnaGhostButton
+                      danger
+                      onClick={() => handleDeleteClick(sample.id)}
+                      style={{ color: confirmDeleteId === sample.id ? DNA_C.danger : DNA_C.textFaint, fontWeight: confirmDeleteId === sample.id ? 700 : 500 }}
+                    >
+                      {confirmDeleteId === sample.id ? "confirm delete?" : "delete"}
+                    </DnaGhostButton>
+                  </div>
+
+                  {expandedSampleId === sample.id && sample.analysis && (
+                    <div style={{ marginTop: "14px", paddingTop: "14px", borderTop: `1px solid ${C.border}`, fontSize: "12px", color: C.mid, lineHeight: "1.7" }}>
+                      <div><strong style={{ color: "#888" }}>What makes it funny:</strong> {sample.analysis.what_makes_it_funny}</div>
+                      <div style={{ marginTop: "8px" }}><strong style={{ color: "#888" }}>Character logic:</strong> {sample.analysis.character_logic}</div>
+                      <div style={{ marginTop: "8px" }}><strong style={{ color: "#888" }}>Escalation:</strong> {sample.analysis.escalation_pattern}</div>
+                      <div style={{ marginTop: "8px" }}><strong style={{ color: "#888" }}>Ending:</strong> {sample.analysis.ending_pattern}</div>
+                      <div style={{ marginTop: "8px" }}><strong style={{ color: "#888" }}>Best decision:</strong> {sample.analysis.best_comedic_decision}</div>
+                      {sample.analysis.recurring_behavior_patterns?.length > 0 && (
+                        <div style={{ marginTop: "8px" }}><strong style={{ color: "#888" }}>Recurring patterns:</strong> {sample.analysis.recurring_behavior_patterns.join(", ")}</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ---- 03 Your DNA ---- */}
+      {dna && (
+        <div>
+          <span style={dnaLabel}>YOUR COMEDY DNA</span>
+
+          <div style={{ ...dnaCard, marginBottom: "10px" }}>
+            <div style={{ fontSize: "11px", letterSpacing: "1.5px", color: C.muted, fontWeight: 700, marginBottom: "10px" }}>CORE COMEDIC BRAIN</div>
+            <p style={{ fontSize: "14px", color: "#ddd", lineHeight: "1.7", margin: "0 0 10px" }}>{dna.core_identity?.core_comedic_brain}</p>
+            {dna.core_identity?.one_sentence_summary && (
+              <p style={{ fontSize: "13px", color: C.mid, fontStyle: "italic", margin: 0 }}>{dna.core_identity.one_sentence_summary}</p>
+            )}
+            {dna.core_identity?.relationship_comedic_dynamic && (
+              <p style={{ fontSize: "12px", color: C.mid, lineHeight: "1.6", margin: "10px 0 0" }}><strong style={{ color: "#999" }}>Relationship dynamic:</strong> {dna.core_identity.relationship_comedic_dynamic}</p>
+            )}
+            {dna.core_identity?.emotional_energy && (
+              <p style={{ fontSize: "12px", color: C.mid, lineHeight: "1.6", margin: "8px 0 0" }}><strong style={{ color: "#999" }}>Emotional energy:</strong> {dna.core_identity.emotional_energy}</p>
+            )}
+          </div>
+
+          {dna.strongest_comedic_instincts?.length > 0 && (
+            <div style={{ ...dnaCard, marginBottom: "10px" }}>
+              <div style={{ fontSize: "11px", letterSpacing: "1.5px", color: C.muted, fontWeight: 700, marginBottom: "14px" }}>STRONGEST INSTINCTS</div>
+              {dna.strongest_comedic_instincts.map((inst, i) => (
+                <div key={i} style={{ marginBottom: i < dna.strongest_comedic_instincts.length - 1 ? "16px" : 0 }}>
+                  <div style={{ fontSize: "13px", fontWeight: "600", color: "#ddd", marginBottom: "4px" }}>{inst.instinct}</div>
+                  <DnaStatBar label="" value={inst.strength} />
+                  <div style={{ fontSize: "12px", color: C.mid, lineHeight: "1.5", marginTop: "-4px" }}>{inst.description}</div>
                 </div>
               ))}
             </div>
+          )}
 
-            {/* Analyze button */}
-            <div style={{ marginTop: "14px", display: "flex", gap: "8px" }}>
-              <button onClick={analyze} disabled={analyzing} style={{
-                flex: 1, padding: "13px", borderRadius: "8px", border: "none",
-                background: analyzing ? C.border : C.purple,
-                color: analyzing ? C.muted : C.ink,
-                fontSize: "14px", fontWeight: 700, cursor: analyzing ? "not-allowed" : "pointer", fontFamily: "inherit",
-                boxShadow: "none",
-              }}>
-                {analyzing ? analyzeMsg : dnaProfile ? "🧬 Re-analyze & Update DNA" : "🧬 Analyze & Build DNA"}
-              </button>
-              <button onClick={clearAll} style={{ padding: "13px 16px", borderRadius: "8px", border: `1.5px solid ${C.border}`, background: C.white, color: C.muted, fontSize: "13px", cursor: "pointer", fontFamily: "inherit" }}>
-                Clear All
-              </button>
+          {dna.comedy_modes?.length > 0 && (
+            <div style={{ marginBottom: "10px" }}>
+              <span style={{ ...dnaLabel, marginBottom: "8px" }}>COMEDY MODES</span>
+              {dna.comedy_modes.map((mode, i) => (
+                <div key={i} style={{ ...dnaCard, marginBottom: "8px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                    <span style={{ fontSize: "14px", fontWeight: "700", color: "#eee" }}>{mode.name}</span>
+                    <span style={{ ...dnaChip, fontSize: "10px" }}>{mode.strength}/10</span>
+                  </div>
+                  <p style={{ fontSize: "12px", color: C.mid, lineHeight: "1.6", margin: "0 0 10px" }}>{mode.description}</p>
+                  {mode.when_to_use?.length > 0 && (
+                    <div style={{ fontSize: "11px", color: C.mid, marginBottom: "6px" }}><strong style={{ color: "#999" }}>When it works:</strong> {mode.when_to_use.join(", ")}</div>
+                  )}
+                  {mode.delivery_style && (
+                    <div style={{ fontSize: "11px", color: C.mid, marginBottom: "6px" }}><strong style={{ color: "#999" }}>Delivery:</strong> {mode.delivery_style}</div>
+                  )}
+                  {mode.escalation_style && (
+                    <div style={{ fontSize: "11px", color: C.mid, marginBottom: "6px" }}><strong style={{ color: "#999" }}>Escalation:</strong> {mode.escalation_style}</div>
+                  )}
+                  {mode.best_formats?.length > 0 && (
+                    <div style={{ fontSize: "11px", color: C.mid }}><strong style={{ color: "#999" }}>Best formats:</strong> {mode.best_formats.join(", ")}</div>
+                  )}
+                </div>
+              ))}
             </div>
+          )}
 
-            {err && <div style={{ marginTop: "10px", padding: "10px 13px", borderRadius: "8px", background: "var(--danger-dim)", color: "var(--danger)", fontSize: "13px" }}>{err}</div>}
-          </div>
-        )}
+          {dna.preferred_comedy_sources && (
+            <div style={{ ...dnaCard, marginBottom: "10px" }}>
+              <div style={{ fontSize: "11px", letterSpacing: "1.5px", color: C.muted, fontWeight: 700, marginBottom: "16px" }}>PREFERRED COMEDY SOURCES</div>
+              {Object.entries(dna.preferred_comedy_sources).map(([key, val]) => (
+                <DnaStatBar key={key} label={key} value={val} />
+              ))}
+            </div>
+          )}
 
-        {/* DNA Profile display */}
-        {dnaProfile && (
-          <div style={{ background: C.white, borderRadius: "10px", overflow: "hidden", border: "1px solid var(--border-soft)" }}>
-            <button onClick={() => setShowProfile(!showProfile)} style={{
-              width: "100%", padding: "14px 16px", border: "none", background: "none",
-              display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer",
-            }}>
-              <span style={{ fontSize: "13px", fontWeight: 700, color: C.dark }}>🧬 Your Comedy DNA Profile</span>
-              <span style={{ color: C.muted, fontSize: "18px", transform: showProfile ? "rotate(180deg)" : "none", transition: "transform 0.2s", display: "inline-block" }}>⌄</span>
-            </button>
-            {showProfile && (
-              <div style={{ padding: "0 16px 16px", borderTop: `1px solid ${C.border}` }}>
-                <div style={{ marginTop: "14px", whiteSpace: "pre-wrap", fontSize: "13px", lineHeight: 1.75, color: C.dark, fontFamily: "monospace" }}>
-                  {JSON.stringify(dnaProfile, null, 2)}
-                </div>
-                <div style={{ marginTop: "14px", display: "flex", gap: "8px" }}>
-                  <button onClick={() => { navigator.clipboard?.writeText(JSON.stringify(dnaProfile, null, 2)); }} style={{ padding: "7px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.white, color: C.muted, fontSize: "11px", fontWeight: 600, cursor: "pointer" }}>Copy Profile</button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+          {dna.delivery_dna && (
+            <div style={{ ...dnaCard, marginBottom: "10px" }}>
+              <div style={{ fontSize: "11px", letterSpacing: "1.5px", color: C.muted, fontWeight: 700, marginBottom: "12px" }}>DELIVERY DNA</div>
+              {Object.entries(dna.delivery_dna).map(([key, val]) => (
+                val ? <div key={key} style={{ fontSize: "12px", color: C.mid, lineHeight: "1.6", marginBottom: "6px" }}><strong style={{ color: "#999", textTransform: "capitalize" }}>{key.replace(/_/g, " ")}:</strong> {val}</div> : null
+              ))}
+            </div>
+          )}
 
-        {samples.length === 0 && !dnaProfile && (
-          <div style={{ background: C.white, borderRadius: "10px", padding: "40px 24px", textAlign: "center", border: "1px solid var(--border-soft)" }}>
-            <div style={{ fontSize: "36px", marginBottom: "12px" }}>🧬</div>
-            <div style={{ fontSize: "14px", fontWeight: 700, color: C.dark, marginBottom: "8px" }}>No samples yet</div>
-            <div style={{ fontSize: "13px", color: C.muted, lineHeight: 1.65 }}>Add 3+ samples above to start building your Comedy DNA.<br />Mix positive and negative examples for the best results.</div>
-          </div>
-        )}
-      </div>
+          {dna.things_to_avoid?.length > 0 && (
+            <div style={{ ...dnaCard, marginBottom: "10px" }}>
+              <div style={{ fontSize: "11px", letterSpacing: "1.5px", color: C.muted, fontWeight: 700, marginBottom: "12px" }}>THINGS TO AVOID</div>
+              {dna.things_to_avoid.map((item, i) => (
+                <div key={i} style={{ fontSize: "12px", color: C.mid, lineHeight: "1.6", marginBottom: "6px" }}>— {item}</div>
+              ))}
+            </div>
+          )}
+
+          {dna.contradictions_or_contextual_modes?.length > 0 && (
+            <div style={{ ...dnaCard, marginBottom: "10px" }}>
+              <div style={{ fontSize: "11px", letterSpacing: "1.5px", color: C.muted, fontWeight: 700, marginBottom: "12px" }}>CONTEXTUAL DIFFERENCES</div>
+              {dna.contradictions_or_contextual_modes.map((item, i) => (
+                <div key={i} style={{ fontSize: "12px", color: C.mid, lineHeight: "1.6", marginBottom: "6px" }}>{item}</div>
+              ))}
+            </div>
+          )}
+
+          {dna.training_summary && (
+            <div style={{ ...dnaCard, borderLeft: `3px solid ${C.muted}` }}>
+              <div style={{ fontSize: "11px", letterSpacing: "1.5px", color: C.muted, fontWeight: 700, marginBottom: "10px" }}>TRAINING SUMMARY</div>
+              <p style={{ fontSize: "13px", color: C.mid, lineHeight: "1.7", margin: 0 }}>{dna.training_summary}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {sampleCount === 0 && !dna && (
+        <div style={{ ...dnaCard, padding: "40px 24px", textAlign: "center" }}>
+          <div style={{ fontSize: "36px", marginBottom: "12px" }}>🧬</div>
+          <div style={{ fontSize: "14px", fontWeight: 700, color: "#ddd", marginBottom: "8px" }}>No samples yet</div>
+          <div style={{ fontSize: "13px", color: C.mid, lineHeight: "1.65" }}>Add 3+ samples above to start building this couple's Comedy DNA.</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1058,6 +1484,13 @@ export default function CoupleContentGeneratorPage() {
   const [provider, setProvider] = useState("anthropic");
   const [situation, setSituation] = useState("");
   const [vibe, setVibe] = useState(null);
+  const [vibeReason, setVibeReason] = useState(null);
+  const [vibeLoading, setVibeLoading] = useState(false);
+  const [toneNoteSuggestion, setToneNoteSuggestion] = useState(null);
+  const [toneNoteLoading, setToneNoteLoading] = useState(false);
+  const [showIdeas, setShowIdeas] = useState(false);
+  const [ideasLoading, setIdeasLoading] = useState(false);
+  const [ideas, setIdeas] = useState(null);
   const [format, setFormat] = useState("acted-skit");
   const [advOpen, setAdvOpen] = useState(false);
   const [location, setLocation] = useState("ai");
@@ -1186,7 +1619,7 @@ export default function CoupleContentGeneratorPage() {
     setLoading(false);
   };
 
-  const refine = async (action) => {
+  const refine = async (action, customInstruction = null) => {
     if (!result || refining) return;
     setRefining(true);
     const guides = {
@@ -1200,10 +1633,11 @@ export default function CoupleContentGeneratorPage() {
       ending: "Strengthen the ending only. Keep the setup. The final beat needs a stronger reversal, callback, or visual punchline. Don't let it just stop.",
       dialogue: "Make the dialogue more natural. Remove any line that sounds written. Incomplete sentences. Talking over each other. No explaining of feelings. Short clipped responses.",
     };
+    const instruction = customInstruction || guides[action];
     try {
       const ai = await callAPI([{
         role: "user",
-        content: `Current concept:\n${JSON.stringify(result, null, 2)}\n\nREFINEMENT: ${guides[action]}\n\nReturn improved concept as valid JSON only, same structure, no other text.`,
+        content: `Current concept:\n${JSON.stringify(result, null, 2)}\n\nREFINEMENT: ${instruction}\n\nReturn improved concept as valid JSON only, same structure, no other text.`,
       }], provider, { maxTokens: 3000, temperature: 0.78 });
       const parsed = parseJSON(ai.text);
       setLastUsage(ai.usage);
@@ -1212,9 +1646,113 @@ export default function CoupleContentGeneratorPage() {
     setRefining(false);
   };
 
+  const suggestVibe = async () => {
+    if (!situation.trim() || vibeLoading) return;
+    setVibeLoading(true);
+    setVibeReason(null);
+    try {
+      const vibeOptions = VIBES.filter(v => v.id !== "surprise-me")
+        .map(v => `- ${v.id}: ${v.label} — ${v.desc}`).join("\n");
+      const prompt = `A couple wants to make short comedy content about this situation: "${situation.trim()}"
+
+Pick the single best-fitting vibe from this list for this specific situation:
+${vibeOptions}
+
+Return ONLY a JSON object, no markdown, no preamble.
+{ "vibeId": "one of the ids above", "reason": "one honest sentence on why this fits" }`;
+      const ai = await callAPI([{ role: "user", content: prompt }], provider, { maxTokens: 220, temperature: 0.2 });
+      const parsed = parseJSON(ai.text);
+      const match = parsed?.vibeId && VIBES.find(v => v.id === parsed.vibeId);
+      if (match) {
+        setVibe(match.id);
+        setVibeReason(parsed.reason || null);
+      }
+    } catch {
+      // fail silently — same as Solo's tone suggestion
+    } finally {
+      setVibeLoading(false);
+    }
+  };
+
+  // AI suggestion for the Audience & Tone note (creativeDna) — separate from
+  // suggestVibe above. Vibe picks the humor mechanism for THIS generation;
+  // this suggests a persistent tone-of-voice note for the audience, mirroring
+  // Solo's Suggest Tone but scoped to the sticky Audience & Tone field instead
+  // of a per-generation value. Purely additive — the free-text field still
+  // works exactly as before if this is never used.
+  const suggestTone = async () => {
+    if (!situation.trim() || toneNoteLoading) return;
+    setToneNoteLoading(true);
+    setToneNoteSuggestion(null);
+    try {
+      const formatObj = FORMATS.find(f => f.id === format);
+      const prompt = `A couple comedy content creator is about to make a ${formatObj?.label || "couple comedy"} (${formatObj?.desc || ""}) about this situation: "${situation.trim()}"
+
+${creativeDna.trim() ? `Their current Audience & Tone note (persists across sessions — describes how this audience should be talked to): "${creativeDna.trim()}"` : "They haven't set an Audience & Tone note yet."}
+
+Suggest a short, concrete Audience & Tone note for how THIS audience should be talked to — style of voice, not the joke itself. e.g. "Very dry. Minimal dialogue. Feels like real couples, not actors." Keep it under 20 words.
+
+Return ONLY a JSON object, no markdown, no preamble.
+{ "tone": "short concrete audience & tone note", "reason": "one honest sentence on why this fits" }`;
+      const ai = await callAPI([{ role: "user", content: prompt }], provider, { maxTokens: 220, temperature: 0.3 });
+      const parsed = parseJSON(ai.text);
+      if (parsed?.tone) setToneNoteSuggestion({ tone: parsed.tone, reason: parsed.reason || null });
+    } catch {
+      // fail silently — same pattern as suggestVibe
+    } finally {
+      setToneNoteLoading(false);
+    }
+  };
+
+  const useToneSuggestion = () => {
+    if (!toneNoteSuggestion) return;
+    const merged = creativeDna.trim() ? `${creativeDna.trim()} ${toneNoteSuggestion.tone}` : toneNoteSuggestion.tone;
+    setCreativeDna(merged);
+    saveCreativeDna(merged);
+    setToneNoteSuggestion(null);
+  };
+
+  // "Get Ideas" — browsable list of premise suggestions, mirrors Solo's
+  // generateIdeas()/selectIdea(). Built client-side like suggestVibe rather
+  // than through a new server action, keeping the same pattern Couple
+  // already uses for AI suggestions.
+  const generateIdeas = async () => {
+    setIdeasLoading(true);
+    setShowIdeas(true);
+    setIdeas(null);
+    try {
+      const formatObj = FORMATS.find(f => f.id === format);
+      const dnaBlock = dnaProfile ? `\n\nThis couple's learned Comedy DNA (use it to inform tone, don't just describe it):\n${summarizeDNAForPrompt(dnaProfile, formatObj?.label || "")}` : "";
+      const avoidBlock = avoidNotes.length > 0 ? `\n\nAVOID — do not suggest anything resembling these:\n${avoidNotes.map(n => `- ${n.note}`).join("\n")}` : "";
+      const prompt = `Suggest 5 distinct, highly relatable couple comedy situation ideas for a ${formatObj?.label || "couple comedy"} (${formatObj?.desc || ""}).${dnaBlock}${avoidBlock}
+
+Each idea must be something real couples actually experience — specific and concrete, not generic sitcom conflict. Make the 5 ideas meaningfully different from each other.
+
+Return ONLY a JSON array, no markdown, no preamble. Each item:
+{ "premise": "a specific relatable couple situation, 1-2 sentences", "vibe": "short natural vibe/tone description", "why": "one sentence on why this works for this couple's audience" }`;
+      const ai = await callAPI([{ role: "user", content: prompt }], provider, { maxTokens: 900, temperature: 0.85 });
+      const parsed = parseJSON(ai.text);
+      setIdeas(Array.isArray(parsed) ? parsed : []);
+    } catch {
+      setIdeas([]);
+    } finally {
+      setIdeasLoading(false);
+    }
+  };
+
+  const selectIdea = (idea) => {
+    setSituation(idea.premise || "");
+    setShowIdeas(false);
+    setIdeas(null);
+    const matchedVibe = VIBES.find(v => v.id !== "surprise-me" && idea.vibe && idea.vibe.toLowerCase().includes(v.label.toLowerCase()));
+    if (matchedVibe) setVibe(matchedVibe.id);
+    setVibeReason(idea.why || idea.vibe || null);
+  };
+
   const surprise = () => {
     setSituation("");
     setVibe(pick(VIBES.filter(v => v.id !== "surprise-me")).id);
+    setVibeReason(null);
     setFormat(pick(FORMATS).id);
     setLocation(pick(LOCATIONS.filter(l => l.id !== "ai")).id);
     setDynamic(pick(DYNAMICS.filter(d => d.id !== "ai")).id);
@@ -1295,7 +1833,7 @@ export default function CoupleContentGeneratorPage() {
   const resetAll = () => {
     // Note: creativeDna (Audience & Tone) is intentionally NOT cleared here —
     // it's a standing tone anchor for this audience, not a per-generation input.
-    setSituation(""); setVibe(null); setFormat("acted-skit");
+    setSituation(""); setVibe(null); setVibeReason(null); setFormat("acted-skit");
     setLocation("ai"); setPersonalities([]); setDynamic("ai");
     setIntensity(null); setFlavor(null); setBlueprint("ai");
     setResult(null); setErr(null); setSavedThisResult(false);
@@ -1323,46 +1861,42 @@ export default function CoupleContentGeneratorPage() {
       {savedOpen && <SavedPanel ideas={savedIdeas} onOpen={openIdea} onDelete={deleteIdea} onClose={() => setSavedOpen(false)} />}
 
       {/* Header */}
-      <div style={{ background: C.white, borderBottom: `1px solid ${C.border}`, padding: "12px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, zIndex: 100, flexWrap: "wrap", gap: "10px" }}>
-        <div>
-          {/* Global Solo/Couple mode switcher — the page-specific tabs
-              (Generator / Comedy DNA / Saved) stay in their own row below,
-              unaffected. */}
-          <div style={{ marginBottom: "6px" }}>
-            <ModeSwitcher active="couple" /><ProviderSwitcher app="couple" provider={provider} onChange={setProvider} />
-          </div>
-          <div style={{ fontSize: "16px", fontWeight: 800, color: C.dark, letterSpacing: "-0.02em" }}>💑 Couple Content Generator</div>
-          <div style={{ fontSize: "11px", color: C.muted }}>TikTok · Make them tag each other</div>
+      <div className="header-shell" style={{ background: C.white, borderBottom: `1px solid ${C.border}`, padding: "24px 28px 0", position: "sticky", top: 0, zIndex: 100 }}>
+        {/* Global Solo/Couple mode switcher — the page-specific tabs
+            (Generator / Comedy DNA / Saved) stay in their own row below,
+            unaffected. */}
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "14px" }}>
+          <ModeSwitcher active="couple" /><ProviderSwitcher app="couple" provider={provider} onChange={setProvider} />
         </div>
-        <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-          <button onClick={() => setView("generator")} style={{
-            padding: "7px 13px", borderRadius: "10px",
-            border: `1.5px solid ${view === "generator" ? C.pink : C.border}`,
-            background: view === "generator" ? `${C.pink}10` : C.white,
-            color: view === "generator" ? C.pink : C.dark,
-            fontSize: "12px", fontWeight: view === "generator" ? 700 : 500, cursor: "pointer",
-          }}>Generator</button>
-          <button onClick={() => setView("dna")} style={{
-            padding: "7px 13px", borderRadius: "10px",
-            border: `1.5px solid ${view === "dna" ? C.purple : C.border}`,
-            background: view === "dna" ? `${C.purple}10` : C.white,
-            color: view === "dna" ? C.purple : C.dark,
-            fontSize: "12px", fontWeight: view === "dna" ? 700 : 500, cursor: "pointer",
-            display: "flex", alignItems: "center", gap: "5px",
-          }}>
-            🧬 Comedy DNA {dnaProfile && <span style={{ background: C.green, color: C.ink, borderRadius: "4px", padding: "1px 5px", fontSize: "10px", fontWeight: 800 }}>ON</span>}
-          </button>
-          {view === "generator" && (
-            <button onClick={() => setSavedOpen(true)} style={{ padding: "7px 13px", borderRadius: "10px", border: `1.5px solid ${C.border}`, background: C.white, color: C.dark, fontSize: "12px", fontWeight: 500, cursor: "pointer" }}>
-              📁 {savedIdeas.length > 0 ? `(${savedIdeas.length})` : "Saved"}
+        <div style={{ paddingBottom: "20px" }}>
+          <div style={{ fontSize: "22px", fontWeight: "800", letterSpacing: "-0.5px", color: "#fff" }}>💑 Couple Content Generator</div>
+          <div style={{ fontSize: "11px", color: C.muted, letterSpacing: "1.5px", marginTop: "4px", textTransform: "uppercase" }}>TikTok · Make them tag each other</div>
+        </div>
+        <div style={{ display: "flex", gap: "4px" }}>
+          {[
+            ["generator", "GENERATOR"],
+            ["dna", `COMEDY DNA${dnaProfile ? " ●" : ""}`],
+            ["saved", `SAVED${savedIdeas.length > 0 ? ` (${savedIdeas.length})` : ""}`],
+          ].map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => id === "saved" ? setSavedOpen(true) : setView(id)}
+              style={{
+                padding: "12px 18px", minHeight: "44px", background: "transparent", border: "none",
+                borderBottom: (id === "saved" ? savedOpen : view === id) ? `2px solid ${C.pink}` : "2px solid transparent",
+                color: (id === "saved" ? savedOpen : view === id) ? C.dark : C.muted, fontSize: "12px", fontWeight: "700",
+                letterSpacing: "1.5px", cursor: "pointer", fontFamily: "inherit", transition: "all 0.2s",
+              }}
+            >
+              {label}
             </button>
-          )}
+          ))}
         </div>
       </div>
 
       {/* DNA Trainer View */}
       {view === "dna" && (
-        <DnaTrainer dnaProfile={dnaProfile} onProfileUpdate={(p) => setDnaProfile(p)} provider={provider} />
+        <DnaTrainer dnaProfile={dnaProfile} onProfileUpdate={(p) => setDnaProfile(p)} provider={provider} avoidNotes={avoidNotes} deleteAvoidNote={deleteAvoidNote} />
       )}
 
       {/* Generator View */}
@@ -1387,7 +1921,7 @@ export default function CoupleContentGeneratorPage() {
           <div className="left-sticky">
 
             {/* Situation */}
-            <div style={{ background: C.white, borderRadius: "10px", padding: "15px", marginBottom: "10px", border: "1px solid var(--border-soft)" }}>
+            <div style={{ marginBottom: "24px" }}>
               <span style={sLabel}>What's happening?</span>
               <textarea
                 value={situation}
@@ -1402,49 +1936,119 @@ export default function CoupleContentGeneratorPage() {
                 onFocus={e => e.target.style.borderColor = C.pink}
                 onBlur={e => e.target.style.borderColor = C.border}
               />
-            </div>
-
-            {/* Vibe */}
-            <div style={{ background: C.white, borderRadius: "10px", padding: "15px", marginBottom: "10px", border: "1px solid var(--border-soft)" }}>
-              <span style={sLabel}>Humor / Vibe <span style={{ fontWeight: 400, fontSize: "9px" }}>— optional</span></span>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                {VIBES.map(v => (
-                  <Chip key={v.id} label={v.label} emoji={v.emoji} selected={vibe === v.id} onClick={() => setVibe(vibe === v.id ? null : v.id)} color={v.id === "surprise-me" ? C.purple : C.pink} />
-                ))}
+              <div style={{ display: "flex", gap: "16px", marginTop: "8px" }}>
+                <button
+                  onClick={generateIdeas}
+                  disabled={ideasLoading}
+                  style={{ border: "none", background: "transparent", color: C.muted, fontSize: "12px", fontWeight: 600, cursor: ideasLoading ? "not-allowed" : "pointer", fontFamily: "inherit", padding: "2px 0", opacity: ideasLoading ? 0.6 : 1 }}
+                >
+                  {ideasLoading ? "thinking..." : "✦ Need inspiration? Suggest an idea"}
+                </button>
               </div>
             </div>
 
+            {showIdeas && (
+              <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: "10px", padding: "14px 15px", marginBottom: "24px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                  <div style={{ fontSize: "11px", letterSpacing: "1.2px", color: C.muted, fontWeight: 700 }}>
+                    IDEAS — <span style={{ color: C.muted, fontWeight: 400 }}>{FORMATS.find(f => f.id === format)?.label}</span>
+                    {dnaProfile && <span style={{ color: C.pink, marginLeft: "8px" }}>· DNA-informed</span>}
+                  </div>
+                  <button onClick={() => setShowIdeas(false)} style={{ background: "transparent", border: "none", color: C.muted, fontSize: "17px", cursor: "pointer", lineHeight: 1 }}>×</button>
+                </div>
+                {ideasLoading && <div style={{ fontSize: "12px", color: C.muted, textAlign: "center", padding: "14px 0" }}>generating ideas...</div>}
+                {ideas?.map((idea, i) => (
+                  <div
+                    key={i}
+                    onClick={() => selectIdea(idea)}
+                    style={{ padding: "12px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, marginBottom: "7px", cursor: "pointer", background: C.bg }}
+                  >
+                    <div style={{ fontSize: "13px", color: C.dark, lineHeight: 1.5, marginBottom: "4px" }}>{idea.premise}</div>
+                    <div style={{ fontSize: "11px", color: C.muted, lineHeight: 1.4 }}>{idea.vibe}{idea.vibe && idea.why ? " — " : ""}{idea.why}</div>
+                  </div>
+                ))}
+                {ideas?.length === 0 && !ideasLoading && (
+                  <div style={{ fontSize: "12px", color: C.muted, textAlign: "center", padding: "10px 0" }}>couldn't generate ideas. try again.</div>
+                )}
+                {ideas?.length > 0 && (
+                  <button onClick={generateIdeas} style={{ border: "none", background: "transparent", color: C.muted, fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", marginTop: "4px" }}>
+                    refresh ideas
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Vibe */}
+            <div style={{ marginBottom: "24px" }}>
+              <span style={sLabel}>Humor / Vibe <span style={{ fontWeight: 400, fontSize: "9px" }}>— optional</span></span>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "8px" }}>
+                {VIBES.map(v => (
+                  <Chip key={v.id} label={v.label} emoji={v.emoji} selected={vibe === v.id} onClick={() => { setVibe(vibe === v.id ? null : v.id); setVibeReason(null); }} color={v.id === "surprise-me" ? C.purple : C.pink} />
+                ))}
+              </div>
+              {situation.trim() && !vibeReason && !vibeLoading && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                  <div style={{ fontSize: "12px", color: C.muted }}>Left to the AI's judgment — or pick a vibe yourself.</div>
+                  <button
+                    onClick={suggestVibe}
+                    style={{ border: "none", background: "transparent", color: C.muted, fontSize: "12px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", padding: "4px 0" }}
+                  >
+                    ✦ suggest vibe
+                  </button>
+                </div>
+              )}
+              {vibeLoading && <div style={{ fontSize: "12px", color: C.muted }}>reading the situation...</div>}
+              {vibeReason && !vibeLoading && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px", flexWrap: "wrap", background: `${C.pink}08`, borderRadius: "8px", padding: "9px 11px" }}>
+                  <div style={{ fontSize: "12px", color: C.mid, lineHeight: 1.5 }}>{vibeReason}</div>
+                  <button onClick={() => setVibeReason(null)} style={{ border: "none", background: "transparent", color: C.muted, fontSize: "11px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                    clear
+                  </button>
+                </div>
+              )}
+            </div>
+
             {/* Format */}
-            <div style={{ background: C.white, borderRadius: "10px", padding: "15px", marginBottom: "10px", border: "1px solid var(--border-soft)" }}>
+            <div style={{ marginBottom: "24px" }}>
               <span style={sLabel}>Format</span>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-                {FORMATS.map(f => (
-                  <button key={f.id} onClick={() => setFormat(f.id)} style={{
-                    padding: "11px 12px", borderRadius: "8px",
-                    border: `1.5px solid ${format === f.id ? C.pink : C.border}`,
-                    background: format === f.id ? `${C.pink}10` : C.white,
-                    cursor: "pointer", textAlign: "left",
-                  }}>
-                    <div style={{ fontSize: "17px", marginBottom: "3px" }}>{f.emoji}</div>
-                    <div style={{ fontSize: "12px", fontWeight: 700, color: format === f.id ? C.pink : C.dark }}>{f.label}</div>
-                    <div style={{ fontSize: "11px", color: C.muted, marginTop: "2px" }}>{f.desc}</div>
-                  </button>
-                ))}
+                {FORMATS.map(f => {
+                  const selected = format === f.id;
+                  return (
+                    <button
+                      key={f.id}
+                      onClick={() => setFormat(f.id)}
+                      className={`format-card ${selected ? "is-selected" : ""}`}
+                      style={{
+                        padding: "14px 8px", borderRadius: "8px",
+                        border: selected ? `1px solid ${C.pink}` : `1px solid ${C.border}`,
+                        background: selected ? `${C.pink}10` : C.bg,
+                        color: selected ? C.dark : C.muted,
+                        cursor: "pointer", fontFamily: "inherit", textAlign: "center",
+                        lineHeight: "1.4", minHeight: "76px",
+                      }}
+                    >
+                      <div style={{ fontSize: "18px", marginBottom: "5px" }}>{f.emoji}</div>
+                      <div style={{ fontWeight: "700", fontSize: "11px", color: selected ? C.pink : C.dark }}>{f.label}</div>
+                      <div style={{ fontSize: "10px", opacity: 0.65, marginTop: "3px", color: C.muted }}>{f.desc}</div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
             {/* Advanced */}
-            <div style={{ background: C.white, borderRadius: "10px", overflow: "hidden", marginBottom: "12px", border: "1px solid var(--border-soft)" }}>
+            <div style={{ marginBottom: "24px" }}>
               <button onClick={() => setAdvOpen(!advOpen)} style={{
-                width: "100%", padding: "14px 15px", border: "none", background: "none",
+                width: "100%", padding: 0, border: "none", background: "none",
                 display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer",
               }}>
-                <span style={{ fontSize: "13px", fontWeight: 700, color: C.dark }}>⚙️ Advanced Creative Controls</span>
+                <span style={sLabel}>⚙️ Advanced Creative Controls</span>
                 <span style={{ color: C.muted, fontSize: "18px", transform: advOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s", display: "inline-block" }}>⌄</span>
               </button>
 
               {advOpen && (
-                <div style={{ padding: "0 15px 15px", borderTop: `1px solid ${C.border}` }}>
+                <div style={{ marginTop: "5px" }}>
 
                   <div style={{ marginTop: "13px" }}>
                     <span style={sLabel}>Location</span>
@@ -1490,7 +2094,30 @@ export default function CoupleContentGeneratorPage() {
                   </div>
 
                   <div style={{ marginTop: "13px" }}>
-                    <span style={sLabel}>Audience &amp; Tone <span style={{ fontWeight: 400 }}>(sticks across sessions — separate from Solo)</span></span>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                      <span style={sLabel}>Audience &amp; Tone <span style={{ fontWeight: 400 }}>(sticks across sessions — separate from Solo)</span></span>
+                      {situation.trim() && !toneNoteSuggestion && !toneNoteLoading && (
+                        <button
+                          onClick={suggestTone}
+                          style={{ border: "none", background: "transparent", color: C.muted, fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", padding: "2px 0 8px" }}
+                        >
+                          ✦ suggest tone
+                        </button>
+                      )}
+                    </div>
+                    {toneNoteLoading && <div style={{ fontSize: "11px", color: C.muted, marginBottom: "8px" }}>reading the situation...</div>}
+                    {toneNoteSuggestion && (
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px", flexWrap: "wrap", background: `${C.pink}08`, borderRadius: "8px", padding: "9px 11px", marginBottom: "8px" }}>
+                        <div>
+                          <div style={{ fontSize: "12px", color: C.dark, fontWeight: 600, marginBottom: toneNoteSuggestion.reason ? "3px" : 0 }}>{toneNoteSuggestion.tone}</div>
+                          {toneNoteSuggestion.reason && <div style={{ fontSize: "11px", color: C.muted, lineHeight: 1.5 }}>{toneNoteSuggestion.reason}</div>}
+                        </div>
+                        <div style={{ display: "flex", gap: "10px", flexShrink: 0 }}>
+                          <button onClick={useToneSuggestion} style={{ border: "none", background: "transparent", color: C.pink, fontSize: "11px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>use this</button>
+                          <button onClick={() => setToneNoteSuggestion(null)} style={{ border: "none", background: "transparent", color: C.muted, fontSize: "11px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>clear</button>
+                        </div>
+                      </div>
+                    )}
                     <textarea
                       value={creativeDna}
                       onChange={e => setCreativeDna(e.target.value)}

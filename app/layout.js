@@ -65,13 +65,6 @@ const GLOBAL_CSS = `
 
   * { box-sizing: border-box; }
 
-  html {
-    /* Prevent any stray wide element (long pasted script line, etc.)
-       from creating horizontal scroll / rubber-banding on mobile. */
-    overflow-x: hidden;
-    width: 100%;
-  }
-
   html, body {
     background: var(--bg-0);
     color: var(--text-primary);

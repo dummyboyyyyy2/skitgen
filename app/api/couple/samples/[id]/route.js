@@ -5,6 +5,25 @@ export const runtime = "nodejs";
 export async function PATCH(req, { params }) {
   try {
     const body = await req.json();
+
+    // resetAnalysis clears both analysis + analysis_error in one shot, used
+    // before reanalyzing a sample — separate from the normal partial update
+    // below since it needs to explicitly null out fields, not just leave them.
+    if (body.resetAnalysis) {
+      const rows = await sql`
+        UPDATE couple_samples
+        SET analysis = NULL, analysis_error = NULL
+        WHERE id = ${params.id}
+        RETURNING id, title, notes, content, sample_type, format, analysis, analysis_error, created_at
+      `;
+      if (!rows.length) return Response.json({ error: "Sample not found." }, { status: 404 });
+      const row = rows[0];
+      return Response.json({ sample: {
+        id: row.id, title: row.title, notes: row.notes, text: row.content, type: row.sample_type, format: row.format,
+        analysis: row.analysis, analysis_error: row.analysis_error, addedAt: row.created_at
+      }});
+    }
+
     const analysis = body.analysis !== undefined ? JSON.stringify(body.analysis) : null;
     const analysisError = body.analysisError !== undefined ? String(body.analysisError || "") : null;
     const rows = await sql`
@@ -12,12 +31,12 @@ export async function PATCH(req, { params }) {
       SET analysis = CASE WHEN ${analysis} IS NULL THEN analysis ELSE ${analysis}::jsonb END,
           analysis_error = CASE WHEN ${analysisError} IS NULL THEN analysis_error ELSE ${analysisError} END
       WHERE id = ${params.id}
-      RETURNING id, content, sample_type, format, analysis, analysis_error, created_at
+      RETURNING id, title, notes, content, sample_type, format, analysis, analysis_error, created_at
     `;
     if (!rows.length) return Response.json({ error: "Sample not found." }, { status: 404 });
     const row = rows[0];
     return Response.json({ sample: {
-      id: row.id, text: row.content, type: row.sample_type, format: row.format,
+      id: row.id, title: row.title, notes: row.notes, text: row.content, type: row.sample_type, format: row.format,
       analysis: row.analysis, analysis_error: row.analysis_error, addedAt: row.created_at
     }});
   } catch (err) {

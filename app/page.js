@@ -884,39 +884,34 @@ export default function SkitGen() {
       )}
 
       <div className="header-shell" style={{ padding: "24px 28px 0", borderBottom: `1px solid ${C.borderSoft}` }}>
+        {/* Global Solo/Couple mode switcher — page-specific tabs (GENERATE /
+            COMEDY DNA / SAVED) stay below, unaffected. Separate app, separate
+            DNA, separate everything under the hood — this is just navigation. */}
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "14px" }}>
+          <ModeSwitcher active="solo" /><ProviderSwitcher app="solo" provider={provider} onChange={setProvider} />
+        </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", paddingBottom: "20px", gap: "12px", flexWrap: "wrap" }}>
           <div>
             <div style={{ fontSize: "22px", fontWeight: "800", letterSpacing: "-0.5px", color: "#fff" }}>SKIT GEN</div>
             <div style={{ fontSize: "11px", color: C.textMuted, letterSpacing: "1.5px", marginTop: "4px" }}>YOUR COMEDY · YOUR VOICE</div>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "7px", fontSize: "11px", color: comedyDNA ? C.success : C.textFaint, fontWeight: 600 }}>
-              <span
-                className={comedyDNA ? "" : "status-dot-pulse"}
-                style={{ width: "6px", height: "6px", borderRadius: "50%", background: comedyDNA ? C.success : C.textFaint, display: "inline-block" }}
-              />
-              {comedyDNA ? "DNA READY" : "NO DNA YET"}
-            </div>
-            {/* Global Solo/Couple mode switcher — page-specific tabs (GENERATE /
-                COMEDY DNA) stay below, unaffected. Separate app, separate DNA,
-                separate everything under the hood — this is just navigation. */}
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" }}>
-              <button onClick={() => setSavedOpen(true)} style={{ padding: "7px 13px", borderRadius: "10px", border: `1.5px solid ${C.border}`, background: "transparent", color: C.textSecondary, fontSize: "12px", fontWeight: 500, cursor: "pointer", fontFamily: "inherit" }}>
-                📁 {savedScripts.length > 0 ? `(${savedScripts.length})` : "Saved"}
-              </button>
-              <ModeSwitcher active="solo" /><ProviderSwitcher app="solo" provider={provider} onChange={setProvider} />
-            </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "7px", fontSize: "11px", color: comedyDNA ? C.success : C.textFaint, fontWeight: 600 }}>
+            <span
+              className={comedyDNA ? "" : "status-dot-pulse"}
+              style={{ width: "6px", height: "6px", borderRadius: "50%", background: comedyDNA ? C.success : C.textFaint, display: "inline-block" }}
+            />
+            {comedyDNA ? "DNA READY" : "NO DNA YET"}
           </div>
         </div>
         <div style={{ display: "flex", gap: "4px" }}>
-          {[["generate", "GENERATE"], ["dna", "COMEDY DNA"]].map(([id, label]) => (
+          {[["generate", "GENERATE"], ["dna", "COMEDY DNA"], ["saved", `SAVED${savedScripts.length > 0 ? ` (${savedScripts.length})` : ""}`]].map(([id, label]) => (
             <button
               key={id}
-              onClick={() => setView(id)}
+              onClick={() => id === "saved" ? setSavedOpen(true) : setView(id)}
               style={{
                 padding: "12px 18px", minHeight: "44px", background: "transparent", border: "none",
-                borderBottom: view === id ? `2px solid ${C.accent}` : "2px solid transparent",
-                color: view === id ? "#fff" : C.textFaint, fontSize: "12px", fontWeight: "700",
+                borderBottom: (id === "saved" ? savedOpen : view === id) ? `2px solid ${C.accent}` : "2px solid transparent",
+                color: (id === "saved" ? savedOpen : view === id) ? "#fff" : C.textFaint, fontSize: "12px", fontWeight: "700",
                 letterSpacing: "1.5px", cursor: "pointer", fontFamily: "inherit", transition: "all 0.2s",
               }}
             >

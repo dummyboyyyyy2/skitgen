@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS scripts (
 -- `samples.format`, which stores one of Solo's own FORMATS ids (lib/prompts.js).
 CREATE TABLE IF NOT EXISTS couple_samples (
   id TEXT PRIMARY KEY,
+  title TEXT,
+  notes TEXT DEFAULT '',
   content TEXT NOT NULL,
   sample_type TEXT DEFAULT '',
   format TEXT,
@@ -60,6 +62,8 @@ CREATE TABLE IF NOT EXISTS couple_samples (
 -- Upgrade older Couple sample tables without destroying existing samples.
 ALTER TABLE couple_samples ADD COLUMN IF NOT EXISTS analysis JSONB;
 ALTER TABLE couple_samples ADD COLUMN IF NOT EXISTS analysis_error TEXT;
+ALTER TABLE couple_samples ADD COLUMN IF NOT EXISTS title TEXT;
+ALTER TABLE couple_samples ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '';
 
 -- If you already ran an older version of this schema, run this once to add the new column:
 -- ALTER TABLE couple_samples ADD COLUMN IF NOT EXISTS format TEXT;
