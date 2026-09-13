@@ -50,8 +50,8 @@ export async function POST(req) {
       case "script": {
         // Mode selection (when DNA exists) is folded into this same prompt/call —
         // see buildScriptPrompt — instead of a separate round trip beforehand.
-        const { formatLabel, formatDesc, topic, context, suggestedTone, dna, avoidNotes = [] } = body;
-        const prompt = buildScriptPrompt(formatLabel, formatDesc, topic, context, suggestedTone, dna, avoidNotes);
+        const { formatLabel, formatDesc, topic, context, suggestedTone, dna, avoidNotes = [], voiceClips = [] } = body;
+        const prompt = buildScriptPrompt(formatLabel, formatDesc, topic, context, suggestedTone, dna, avoidNotes, voiceClips);
         const scriptTokenBudget = {
           "One-Liner": 700,
           "POV": 1800,

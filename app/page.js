@@ -769,6 +769,9 @@ export default function SkitGen() {
         }, null, provider);
       } else {
         const formatInfo = FORMATS.find((f) => f.id === format);
+        const voiceClips = samples
+          .filter((s) => includedSampleIds.includes(s.id) && s.analysis?.voice_clip)
+          .map((s) => s.analysis.voice_clip);
 
         data = await apiGenerate("script", {
           formatLabel: formatInfo.label,
@@ -778,6 +781,7 @@ export default function SkitGen() {
           suggestedTone,
           dna: comedyDNA,
           avoidNotes,
+          voiceClips,
         }, null, provider);
 
         const modeFromResult = data.result ? parseResult(data.result).mode : null;

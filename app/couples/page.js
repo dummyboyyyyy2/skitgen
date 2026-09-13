@@ -940,7 +940,6 @@ function DnaTrainer({ dnaProfile, onProfileUpdate, provider, avoidNotes = [], de
           throw new Error(`Sample ${i + 1} analysis failed: ${sampleErr?.message || "Analysis failed."}`);
         }
       }
-      setDnaNeedsRebuild(true);
       setAnalyzeMsg(`Analyzed ${pending.length} new sample${pending.length === 1 ? "" : "s"}.`);
     } catch (e) {
       setErr(e.message || "Analysis failed. Please try again.");
