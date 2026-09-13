@@ -99,16 +99,6 @@ CREATE TABLE IF NOT EXISTS couple_tone_notes (
   CONSTRAINT couple_tone_notes_single_row CHECK (id = 1)
 );
 
--- ─── Shared: per-app AI provider selection ──────────────────────────────────
--- Which provider ("gemini" | "anthropic") each generator currently calls.
--- One row per app. Falls back to each app's original default provider if no
--- row exists yet (Solo → gemini, Couple → anthropic) — see lib/ai.js.
-CREATE TABLE IF NOT EXISTS settings (
-  app TEXT PRIMARY KEY CHECK (app IN ('solo', 'couple')),
-  provider TEXT NOT NULL CHECK (provider IN ('gemini', 'anthropic')),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
 
 -- Persistent negative feedback / "Avoid" notes. Kept separate from Comedy DNA so
 -- these rules survive every DNA retrain unchanged.
@@ -125,3 +115,18 @@ CREATE TABLE IF NOT EXISTS couple_avoid_notes (
   source_script TEXT DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ─── Shared: per-app OpenRouter model selection ─────────────────────────────
+-- Which OpenRouter model each generator's script/refine calls currently use,
+-- chosen from the live dropdown fed by GET /api/models (OpenRouter's own
+-- catalog — never hardcoded). One row per app. If no row exists yet, GET
+-- /api/model-settings falls back to OPENROUTER_MODEL or lib/openrouter.js's
+-- hardcoded default.
+CREATE TABLE IF NOT EXISTS model_settings (
+  app TEXT PRIMARY KEY CHECK (app IN ('solo', 'couple')),
+  model TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'openrouter' CHECK (source IN ('openrouter', 'gemini')),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- Migration for existing databases created before the `source` column existed:
+-- ALTER TABLE model_settings ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'openrouter' CHECK (source IN ('openrouter', 'gemini'));

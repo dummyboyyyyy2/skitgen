@@ -1,8 +1,8 @@
 import { safeJSONParse } from "@/lib/gemini";
 import { callAI, DEFAULT_PROVIDER, isValidProvider } from "@/lib/ai";
+import { getSoloGeminiKey } from "@/lib/geminiKeys";
 import {
-  COMEDY_PROFILE,
-  COMEDY_VERIFIER,
+  buildComedyProfile,
   buildIdeaPrompt,
   buildTonePrompt,
   buildRefinePrompt,
@@ -11,38 +11,53 @@ import {
   buildDNAUpdatePrompt,
   buildScriptPrompt,
   buildAvoidNotePrompt,
-  buildScriptVerificationPrompt,
 } from "@/lib/prompts";
 
 export const runtime = "nodejs";
-// Script generation now makes two sequential calls (draft + verification), so
-// this needs more headroom than a single-call route. 90s comfortably covers
-// both at the largest per-format token budgets below on a slow provider day.
-// Note: if you're on Vercel's Hobby plan, function duration is capped at 60s
-// regardless of this value — bump to Pro (or trim VERIFY_TOKEN_FRACTION below
-// further) if you see timeouts on Rant/Skit.
 export const maxDuration = 90;
 
+// SHARED-ARCHITECTURE RULE: Solo and Couple should keep equivalent pipeline mechanics.
+// Do not copy Solo creative prompts/DNA semantics into Couple; only port engineering improvements.
 export async function POST(req) {
   try {
     const body = await req.json();
-    const { action, provider: rawProvider } = body;
-    // Caller (app/page.js) passes along whatever GET /api/settings returned for
-    // "solo"; fall back to Solo's own default if omitted or invalid, so this
-    // route still works standalone (e.g. direct API calls, tests).
-    const provider = isValidProvider(rawProvider) ? rawProvider : DEFAULT_PROVIDER.solo;
+    const { action, provider: rawProvider, openrouterModel, useGemini } = body;
+    // Only meaningful for the two OpenRouter-routed actions below; harmless
+    // to have present for other actions since lib/ai.js only reads `model`
+    // in its openrouter branch. Suppressed when useGemini is set, since
+    // Gemini has no per-call model marketplace the way OpenRouter does.
+    const modelOption = !useGemini && openrouterModel ? { model: openrouterModel } : {};
+
+    // Solo routing is intentionally task-based:
+    // - Gemini handles lightweight/structured work around the script.
+    // - OpenRouter handles the actual creative writing and refinement —
+    //   UNLESS the person has flipped the "Gemini (direct)" generation
+    //   source toggle, in which case script/refine go straight to this
+    //   app's own Gemini API key instead, avoiding OpenRouter's rate limit
+    //   (shared across every app using its free-tier models) entirely.
+    // The client no longer chooses the provider for other actions, so
+    // provider choice for those can change without changing the UI.
+    const provider = action === "script" || action === "refine"
+      ? (useGemini ? "gemini" : "openrouter")
+      : (isValidProvider(rawProvider) ? rawProvider : DEFAULT_PROVIDER.solo);
 
     switch (action) {
       case "ideas": {
-        const { formatLabel, formatDesc, dna, avoidNotes = [] } = body;
-        const ai = await callAI({ provider, prompt: buildIdeaPrompt(formatLabel, formatDesc, dna, avoidNotes), maxTokens: 900, options: { lite: true, temperature: 0.8 } });
+        const { formatLabel, formatDesc, dna, avoidNotes = [], recentPremises = [], scenario = "" } = body;
+        // Ideas used to run on the lite model tier — cheaper/faster, but a
+        // meaningfully weaker model than the one that actually writes scripts.
+        // Idea quality/voice-fit matters too much here to keep that tradeoff.
+        // 900 -> 1500: a full DNA profile plus 5 idea objects could occasionally
+        // get cut off mid-JSON at 900, which silently surfaced as "couldn't
+        // generate ideas" (a parse failure here returns [] instead of an error).
+        const ai = await callAI({ provider, prompt: buildIdeaPrompt(formatLabel, formatDesc, dna, avoidNotes, recentPremises, scenario), maxTokens: 1500, options: { temperature: 0.8, json: true, apiKey: getSoloGeminiKey("ideas") } });
         const parsed = safeJSONParse(ai.text, []);
         return Response.json({ ideas: Array.isArray(parsed) ? parsed : [], usage: ai.usage });
       }
 
       case "tone": {
         const { topic, formatLabel, formatDesc, dna } = body;
-        const ai = await callAI({ provider, prompt: buildTonePrompt(topic, formatLabel, formatDesc, dna), maxTokens: 250, options: { lite: true, temperature: 0.2 } });
+        const ai = await callAI({ provider, prompt: buildTonePrompt(topic, formatLabel, formatDesc, dna), maxTokens: 250, options: { lite: true, temperature: 0.2, apiKey: getSoloGeminiKey("tone") } });
         const parsed = safeJSONParse(ai.text);
         return Response.json({ tone: parsed?.tone || null, reason: parsed?.reason || null, usage: ai.usage });
       }
@@ -53,52 +68,34 @@ export async function POST(req) {
         const { formatLabel, formatDesc, topic, context, suggestedTone, dna, avoidNotes = [], voiceClips = [] } = body;
         const prompt = buildScriptPrompt(formatLabel, formatDesc, topic, context, suggestedTone, dna, avoidNotes, voiceClips);
         const scriptTokenBudget = {
-          "One-Liner": 700,
-          "POV": 1800,
-          "Character Bit": 2200,
+          "One-Liner": 500,
+          "Text Overlay": 1500,
           "Roast": 1800,
-          "Commentary": 2200,
           "Skit": 3000,
           "Rant": 3200,
         }[formatLabel] || 2400;
-        const draftAI = await callAI({ provider, system: COMEDY_PROFILE, prompt, maxTokens: scriptTokenBudget, options: { temperature: 0.9 } });
-        const text = draftAI.text;
-        // The verification pass repairs, it doesn't extend — a fixed-up script
-        // is never meaningfully longer than the draft it started from. Capping
-        // its budget below the draft's own keeps the two-call round trip well
-        // inside maxDuration instead of letting a repair run as long as a
-        // fresh generation would.
-        const verifyTokenBudget = Math.max(500, Math.round(scriptTokenBudget * 0.7));
-        const verifiedAI = await callAI({
-          provider,
-          system: COMEDY_VERIFIER,
-          prompt: buildScriptVerificationPrompt(text, avoidNotes, prompt),
-          maxTokens: verifyTokenBudget,
-          options: { temperature: 0.3, retries: 2 },
-        });
-        return Response.json({
-          result: verifiedAI.text || text,
-          usage: {
-            inputTokens: (draftAI.usage?.inputTokens || 0) + (verifiedAI.usage?.inputTokens || 0),
-            outputTokens: (draftAI.usage?.outputTokens || 0) + (verifiedAI.usage?.outputTokens || 0),
-            totalTokens: (draftAI.usage?.totalTokens || 0) + (verifiedAI.usage?.totalTokens || 0),
-          },
-        });
+        const ai = await callAI({ provider, system: buildComedyProfile(dna), prompt, maxTokens: scriptTokenBudget, options: { temperature: 0.9, ...modelOption, apiKey: getSoloGeminiKey("script") } });
+        const parsed = safeJSONParse(ai.text);
+        // Validate the model response locally, but never send the draft through
+        // a second creative model pass that could normalize or override learned DNA.
+        return Response.json({ result: parsed ? JSON.stringify(parsed) : ai.text, usage: ai.usage });
       }
 
       case "distillAvoidNote": {
         const { script, reason = "" } = body;
         if (!script || !String(script).trim()) return Response.json({ error: "script is required" }, { status: 400 });
         const prompt = buildAvoidNotePrompt(String(script), String(reason || ""));
-        const ai = await callAI({ provider, prompt, maxTokens: 120, options: { lite: true, temperature: 0.15 } });
+        const ai = await callAI({ provider, prompt, maxTokens: 120, options: { lite: true, temperature: 0.15, apiKey: getSoloGeminiKey("distillAvoidNote") } });
         return Response.json({ note: String(ai.text || "").trim(), usage: ai.usage });
       }
 
       case "refine": {
-        const { originalScript, feedback, dna, selectedMode } = body;
-        const prompt = buildRefinePrompt(originalScript, feedback, dna, selectedMode);
-        const ai = await callAI({ provider, system: COMEDY_PROFILE, prompt, maxTokens: 2600, options: { temperature: 0.78 } });
-        return Response.json({ result: ai.text, usage: ai.usage });
+        const { originalResult, feedback, dna, selectedMode } = body;
+        const prompt = buildRefinePrompt(originalResult, feedback, dna, selectedMode);
+        const ai = await callAI({ provider, system: buildComedyProfile(dna), prompt, maxTokens: 2600, options: { temperature: 0.78, ...modelOption, apiKey: getSoloGeminiKey("refine") } });
+        // Same repair-with-fallback pattern as "script" above.
+        const refined = safeJSONParse(ai.text);
+        return Response.json({ result: refined ? JSON.stringify(refined) : ai.text, usage: ai.usage });
       }
 
       case "analyzeSample": {
@@ -110,7 +107,7 @@ export async function POST(req) {
           content.length > MAX_SAMPLE_CHARS
             ? content.slice(0, MAX_SAMPLE_CHARS) + "\n\n[...truncated for analysis, sample exceeded length cap...]"
             : content;
-        const ai = await callAI({ provider, prompt: buildSampleAnalysisPrompt(trimmedContent, title, formatLabel, formatDesc), maxTokens: 1800, options: { temperature: 0.2 } });
+        const ai = await callAI({ provider, prompt: buildSampleAnalysisPrompt(trimmedContent, title, formatLabel, formatDesc), maxTokens: 1800, options: { temperature: 0.2, apiKey: getSoloGeminiKey("analyzeSample") } });
         const parsed = safeJSONParse(ai.text);
         if (!parsed) return Response.json({ error: "Couldn't parse the analysis. Try reanalyzing this sample." }, { status: 422 });
         return Response.json({ analysis: parsed, usage: ai.usage });
@@ -119,7 +116,11 @@ export async function POST(req) {
       case "synthesizeDNA": {
         const { analyses, baseProfileSummary } = body;
         const prompt = buildDNASynthesisPrompt(analyses, baseProfileSummary);
-        const ai = await callAI({ provider, prompt, maxTokens: 4000, options: { temperature: 0.2 } });
+        // 8000 gives headroom for a full rebuild off up to ~20 samples' worth of
+        // evidence (bigger instinct/mode/avoid-pattern arrays) without truncating
+        // mid-JSON; json:true structurally guarantees a parseable response instead
+        // of relying on the prompt alone.
+        const ai = await callAI({ provider, prompt, maxTokens: 8000, options: { temperature: 0.2, json: true, apiKey: getSoloGeminiKey("synthesizeDNA") } });
         const parsed = safeJSONParse(ai.text);
         if (!parsed) return Response.json({ error: "Couldn't parse the DNA synthesis response." }, { status: 422 });
         return Response.json({ dna: parsed, usage: ai.usage });
@@ -130,7 +131,9 @@ export async function POST(req) {
         // NEW samples' analyses, not the full analyzed corpus. Much cheaper per rebuild.
         const { existingDNA, newAnalyses } = body;
         const prompt = buildDNAUpdatePrompt(existingDNA, newAnalyses);
-        const ai = await callAI({ provider, prompt, maxTokens: 4000, options: { temperature: 0.2 } });
+        // Same headroom bump as synthesizeDNA above — the response echoes the FULL
+        // merged DNA object back, which grows with corpus size (up to ~20 samples).
+        const ai = await callAI({ provider, prompt, maxTokens: 8000, options: { temperature: 0.2, json: true, apiKey: getSoloGeminiKey("updateDNA") } });
         const parsed = safeJSONParse(ai.text);
         if (!parsed) return Response.json({ error: "Couldn't parse the DNA update response." }, { status: 422 });
         return Response.json({ dna: parsed, usage: ai.usage });

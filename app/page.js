@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { FORMATS } from "@/lib/prompts";
 import ModeSwitcher from "@/lib/ModeSwitcher";
-import ProviderSwitcher from "@/lib/ProviderSwitcher";
+import ModelSelect from "@/lib/ModelSelect";
 
 // Cap on how many samples can feed the Comedy DNA at once. Past this, more
 // samples tend to average out distinctive quirks instead of sharpening them —
@@ -19,11 +19,11 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function formatAIError(data, status) {
   if (data?.code === "RATE_LIMIT_EXHAUSTED") {
-    const provider = data.provider === "anthropic" ? "Anthropic" : "Gemini";
+    const provider = data.provider === "anthropic" ? "Anthropic" : data.provider === "openrouter" ? "OpenRouter" : "Gemini";
     const wait = Number.isFinite(Number(data.retryAfter)) && Number(data.retryAfter) > 0
       ? ` The provider asked us to wait about ${Math.ceil(Number(data.retryAfter))} seconds.`
       : "";
-    return `${provider} rate limit reached — this API is temporarily maxed out for this request.${wait} Please wait a little and try again, or switch to the other AI provider.`;
+    return `${provider} rate limit reached — this API is temporarily maxed out for this request.${wait} Please wait a little and try again.`;
   }
   return data?.error || `Request failed (${status})`;
 }
@@ -184,9 +184,43 @@ const copyToClipboard = (text, onDone) => {
 
 // Pulls the structured pieces (mode/style/language/script/closing line) out
 // of the raw AI response text. Lives at module scope (not just inside the
-// main component) so SavedPanel and the save/open/copy handlers can reuse it
+// main component) so SavedView and the save/open/copy handlers can reuse it
 // on saved skits without re-deriving their own copy of the same regexes.
+// Parses a stored/generated result string into a display object. Two
+// formats can show up here:
+//   1. The current JSON schema (title-less; script/premise/characters/beats/
+//      shot_list/ending/caption/hashtags) — powers the Script/Breakdown/Post
+//      tabs, mirroring Couple's ResultCard.
+//   2. The legacy plaintext format (MODE:/STYLE:/LANGUAGE:/--- SCRIPT ---/
+//      --- LINE TO REMEMBER ---) from scripts saved before this schema
+//      existed. These only ever get a Script tab — see `legacy` below.
 function parseResult(text) {
+  if (typeof text !== "string") return { script: "", legacy: true };
+  const cleaned = text.replace(/```json|```/g, "").trim();
+
+  if (cleaned.startsWith("{")) {
+    try {
+      const obj = JSON.parse(cleaned);
+      return {
+        mode: obj.mode || undefined,
+        style: obj.style || undefined,
+        lang: obj.lang || undefined,
+        script: obj.script || "",
+        premise: obj.premise || "",
+        characters: Array.isArray(obj.characters) ? obj.characters : [],
+        beats: Array.isArray(obj.beats) ? obj.beats : [],
+        shot_list: Array.isArray(obj.shot_list) ? obj.shot_list : [],
+        filming_difficulty: obj.filming_difficulty || "",
+        ending: obj.ending || "",
+        caption: obj.caption || "",
+        hashtags: Array.isArray(obj.hashtags) ? obj.hashtags : [],
+        legacy: false,
+      };
+    } catch {
+      // Not actually valid JSON despite the leading brace — fall through.
+    }
+  }
+
   try {
     const modeMatch = text.match(/MODE:\s*(.+)/);
     const styleMatch = text.match(/STYLE:\s*(.+)/);
@@ -199,9 +233,10 @@ function parseResult(text) {
       lang: langMatch?.[1]?.trim(),
       script: scriptMatch?.[1]?.trim() || text,
       legend: lineMatch?.[1]?.trim(),
+      legacy: true,
     };
   } catch {
-    return { script: text };
+    return { script: text, legacy: true };
   }
 }
 
@@ -334,42 +369,251 @@ function ScriptBody({ text }) {
   );
 }
 
-// Slide-out list of skits the user has explicitly saved. Mirrors Couple's
-// SavedPanel (app/couples/page.js) — same layout, same Open/Copy/Delete
-// actions — but backed by the `scripts` table via /api/saved.
-function SavedPanel({ scripts, onOpen, onCopy, onDelete, onClose }) {
+// Tabbed result view — mirrors Couple's ResultCard tab mechanic
+// (Script / Breakdown / Post, app/couples/page.js) on the UI/architecture
+// level, but wired to Solo's own schema/fields (see parseResult() above and
+// buildScriptPrompt in lib/prompts.js), per AI-CODING-GUIDELINES.md: shared
+// interface, separate creative semantics.
+//
+// Legacy-format saved scripts (parsed.legacy === true) only ever show the
+// Script tab — there's no Breakdown/Post data to show for those.
+function SoloResultTabs({ parsed, usage, copied, onCopy, onSave, saving, saved }) {
+  const [tab, setTab] = useState("script");
+  const hasStructure = !parsed.legacy;
+
+  const postText = `${parsed.caption || ""}\n\n${(parsed.hashtags || []).map((h) => `#${h.replace(/^#/, "")}`).join(" ")}`;
+  const breakdownText = [
+    parsed.premise && `PREMISE\n${parsed.premise}`,
+    parsed.characters?.length && `\nCHARACTERS\n${parsed.characters.map((c) => `${c.role}: ${c.trait}`).join("\n")}`,
+    parsed.beats?.length && `\nBEATS\n${parsed.beats.map((b, i) => `${i + 1}. ${b}`).join("\n")}`,
+    parsed.shot_list?.length && `\nSHOT LIST\n${parsed.shot_list.join("\n")}`,
+    parsed.ending && `\nENDING\n${parsed.ending}`,
+  ].filter(Boolean).join("");
+  const tabText = { script: parsed.script || "", breakdown: breakdownText, post: postText };
+
   return (
-    <div style={{
-      position: "fixed", top: 0, right: 0, bottom: 0, width: "min(380px, 100vw)",
-      background: C.surface2, borderLeft: `1px solid ${C.border}`,
-      zIndex: 200, display: "flex", flexDirection: "column",
-    }}>
-      <div style={{ padding: "16px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-        <div style={{ fontSize: "15px", fontWeight: 800, color: "#fff" }}>Saved Skits ({scripts.length})</div>
-        <button onClick={onClose} style={{ background: "none", border: "none", fontSize: "22px", cursor: "pointer", color: C.textMuted, lineHeight: 1 }}>×</button>
-      </div>
-      <div style={{ overflowY: "auto", flex: 1, padding: "12px" }}>
-        {scripts.length === 0 ? (
-          <div style={{ padding: "40px 0", textAlign: "center", color: C.textMuted, fontSize: "14px" }}>
-            No saved skits yet.<br />Generate and save one!
+    <div style={{ ...S.card, padding: 0, overflow: "hidden", marginTop: "4px" }}>
+      <div style={{ padding: "18px 22px 14px", borderBottom: `1px solid ${C.borderSoft}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
+          <span style={{ fontSize: "12px", letterSpacing: "1.5px", color: C.textMuted, fontWeight: 700 }}>YOUR SKIT</span>
+          <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+            {usage && formatTokenUsage(usage) && (
+              <span style={{ fontSize: "10px", color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: "999px", padding: "4px 8px", whiteSpace: "nowrap" }}>
+                {formatTokenUsage(usage)}
+              </span>
+            )}
+            <GhostButton onClick={() => onCopy(tabText[tab])} style={{ color: copied ? C.success : C.textMuted }}>
+              {copied ? "copied ✓" : "copy"}
+            </GhostButton>
+            <button
+              onClick={onSave}
+              disabled={saving || saved}
+              style={{
+                padding: "6px 13px", borderRadius: "8px",
+                border: `1px solid ${saved ? C.success : C.border}`,
+                background: saved ? `${C.success}15` : "transparent",
+                color: saved ? C.success : C.textMuted,
+                fontSize: "12px", fontWeight: 600, cursor: saving || saved ? "default" : "pointer",
+                fontFamily: "inherit", transition: "all 0.15s",
+              }}
+            >
+              {saved ? "✓ saved" : saving ? "saving…" : "save"}
+            </button>
           </div>
-        ) : scripts.map((item) => {
-          const script = typeof item.result === "string" ? parseResult(item.result).script : (item.result?.script || "");
-          return (
-            <div key={item.id} style={{ background: C.surface1, border: `1px solid ${C.borderSoft}`, borderRadius: "8px", padding: "14px", marginBottom: "10px" }}>
-              <div style={{ fontSize: "14px", fontWeight: 700, color: "#eee", marginBottom: "4px" }}>{item.topic || "Untitled"}</div>
-              <div style={{ fontSize: "12px", color: C.textMuted, marginBottom: "12px", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
-                {script.slice(0, 140)}{script.length > 140 ? "…" : ""}
+        </div>
+      </div>
+
+      {hasStructure && (
+        <div style={{ display: "flex", borderBottom: `1px solid ${C.borderSoft}` }}>
+          {[{ id: "script", label: "Script" }, { id: "breakdown", label: "Breakdown" }, { id: "post", label: "Post" }].map((t) => (
+            <button key={t.id} onClick={() => setTab(t.id)} style={{
+              flex: 1, padding: "11px 0", border: "none", background: "none",
+              borderBottom: tab === t.id ? `2px solid ${C.accent}` : "2px solid transparent",
+              color: tab === t.id ? C.accent : C.textMuted,
+              fontSize: "13px", fontWeight: tab === t.id ? 700 : 500,
+              cursor: "pointer", fontFamily: "inherit", marginBottom: "-1px", transition: "all 0.12s",
+            }}>{t.label}</button>
+          ))}
+        </div>
+      )}
+
+      <div style={{ padding: "20px 22px" }}>
+        {(!hasStructure || tab === "script") && (
+          <ScriptBody text={parsed.script || "No script generated."} />
+        )}
+
+        {hasStructure && tab === "breakdown" && (
+          <div style={{ fontSize: "13px", lineHeight: 1.7, color: "#d8d8d8" }}>
+            {parsed.premise && (
+              <div style={{ marginBottom: "14px" }}>
+                <span style={S.sectionLabel}>Premise</span>
+                <div style={{ fontStyle: "italic", color: C.textSecondary }}>{parsed.premise}</div>
               </div>
-              <div style={{ display: "flex", gap: "8px" }}>
-                <button onClick={() => onOpen(item)} style={{ flex: 1, padding: "8px", borderRadius: "8px", border: "none", background: C.accent, color: "#1a1200", fontSize: "12px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Open</button>
-                <button onClick={() => onCopy(item)} style={{ padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "transparent", color: C.textSecondary, fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}>Copy</button>
-                <button onClick={() => onDelete(item.id)} style={{ padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "transparent", color: C.textMuted, fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}>Delete</button>
+            )}
+            {parsed.characters?.length > 0 && (
+              <div style={{ marginBottom: "14px" }}>
+                <span style={S.sectionLabel}>Characters</span>
+                {parsed.characters.map((c, i) => (
+                  <div key={i} style={{ display: "flex", gap: "10px", marginBottom: "5px" }}>
+                    <span style={{ fontWeight: 700, color: C.textSecondary, minWidth: "90px" }}>{c.role}</span>
+                    <span style={{ color: C.textMuted }}>{c.trait}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {parsed.beats?.length > 0 && (
+              <div style={{ marginBottom: "14px" }}>
+                <span style={S.sectionLabel}>Beats</span>
+                {parsed.beats.map((b, i) => (
+                  <div key={i} style={{ display: "flex", gap: "10px", marginBottom: "7px" }}>
+                    <span style={{ color: C.accent, fontWeight: 800, minWidth: "18px", fontSize: "12px" }}>{i + 1}</span>
+                    <span>{b}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {parsed.shot_list?.length > 0 && (
+              <div style={{ marginBottom: "14px" }}>
+                <span style={S.sectionLabel}>Shot List</span>
+                {parsed.shot_list.map((s, i) => <div key={i} style={{ marginBottom: "5px" }}>📷 {s}</div>)}
+              </div>
+            )}
+            {parsed.ending && (
+              <div>
+                <span style={S.sectionLabel}>Ending</span>
+                <div style={{ background: "rgba(240,180,41,0.06)", padding: "10px 13px", borderRadius: "10px", fontStyle: "italic" }}>{parsed.ending}</div>
+              </div>
+            )}
+            {!parsed.premise && !parsed.characters?.length && !parsed.beats?.length && !parsed.shot_list?.length && !parsed.ending && (
+              <div style={{ color: C.textFaint }}>No breakdown details for this one.</div>
+            )}
+          </div>
+        )}
+
+        {hasStructure && tab === "post" && (
+          <div>
+            <div style={{ marginBottom: "16px" }}>
+              <span style={S.sectionLabel}>Caption</span>
+              <div style={{ fontSize: "14px", lineHeight: 1.6, color: "#d8d8d8", padding: "12px 14px", background: C.surface1, borderRadius: "10px" }}>
+                {parsed.caption || "—"}
               </div>
             </div>
-          );
-        })}
+            <div>
+              <span style={S.sectionLabel}>Hashtags</span>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                {(parsed.hashtags || []).map((h, i) => (
+                  <span key={i} style={{ padding: "4px 10px", borderRadius: "100px", background: C.surface1, color: C.accent, fontSize: "12px", fontWeight: 600 }}>
+                    #{h.replace(/^#/, "")}
+                  </span>
+                ))}
+                {(!parsed.hashtags || !parsed.hashtags.length) && <span style={{ color: C.textFaint, fontSize: "12px" }}>—</span>}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+// Full-page list of skits the user has explicitly saved, rendered inline in
+// page-shell alongside the Generate/Comedy DNA views (it used to be a
+// slide-out modal panel — now it's a proper third tab). Backed by the
+// `scripts` table via /api/saved.
+//
+// Opening an item shows its full script/breakdown/post right here (via
+// SoloResultTabs) instead of jumping back to the Generate tab and
+// overwriting whatever's in the generator fields — `openedItem` just tracks
+// which saved skit (if any) is currently expanded.
+function SavedView({ scripts, openedItem, onOpen, onCloseDetail, onCopy, onCopyText, copied, onDelete }) {
+  // Delete is destructive and irreversible (hits DELETE /api/saved/[id]
+  // straight away), so it's gated behind a confirm dialog instead of firing
+  // on a single tap — this state just tracks which item id (if any) is
+  // pending confirmation.
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const confirmItem = scripts.find((s) => s.id === confirmDeleteId) || null;
+
+  const confirmDialog = confirmItem && (
+    <div style={{ position: "fixed", inset: 0, zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+      <div onClick={() => setConfirmDeleteId(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)" }} />
+      <div style={{ position: "relative", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: "12px", padding: "20px", width: "min(320px, 100%)" }}>
+        <div style={{ fontSize: "15px", fontWeight: 800, color: "#fff", marginBottom: "8px" }}>Delete this skit?</div>
+        <div style={{ fontSize: "13px", color: C.textMuted, marginBottom: "18px", lineHeight: 1.5 }}>
+          “{confirmItem.topic || "Untitled"}” will be permanently deleted. This can't be undone.
+        </div>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button onClick={() => setConfirmDeleteId(null)} style={{ flex: 1, padding: "10px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "transparent", color: C.textSecondary, fontSize: "13px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          <button
+            onClick={() => { onDelete(confirmDeleteId); setConfirmDeleteId(null); }}
+            style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "none", background: C.danger, color: "#fff", fontSize: "13px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (openedItem) {
+    const parsed = typeof openedItem.result === "string" ? parseResult(openedItem.result) : parseResult(JSON.stringify(openedItem.result));
+    return (
+      <div style={S.section}>
+        {confirmDialog}
+        <button
+          onClick={onCloseDetail}
+          style={{ background: "none", border: "none", padding: 0, marginBottom: "16px", fontSize: "13px", fontWeight: 700, color: C.textMuted, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: "6px" }}
+        >
+          ← Back to Saved
+        </button>
+        <div style={{ fontSize: "16px", fontWeight: 800, color: "#fff", marginBottom: "4px" }}>{openedItem.topic || "Untitled"}</div>
+        <div style={{ display: "flex", gap: "7px", flexWrap: "wrap", marginBottom: "12px" }}>
+          {parsed.style && <span style={S.chip}>{parsed.style}</span>}
+          {parsed.lang && <span style={S.chip}>{parsed.lang}</span>}
+          {openedItem.modeUsed && <span style={{ ...S.chip, color: C.success, borderColor: "#1a3a1a" }}>{openedItem.modeUsed}</span>}
+          {parsed.filming_difficulty && <span style={S.chip}>📹 {parsed.filming_difficulty}</span>}
+        </div>
+        {parsed.script && (
+          <SoloResultTabs
+            parsed={parsed}
+            usage={null}
+            copied={copied}
+            onCopy={onCopyText}
+            onSave={() => {}}
+            saving={false}
+            saved={true}
+          />
+        )}
+        <div style={{ marginTop: "12px" }}>
+          <button onClick={() => setConfirmDeleteId(openedItem.id)} style={{ padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "transparent", color: C.textMuted, fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}>Delete this skit</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={S.section}>
+      {confirmDialog}
+      <div style={{ fontSize: "15px", fontWeight: 800, color: "#fff", marginBottom: "16px" }}>Saved Skits ({scripts.length})</div>
+      {scripts.length === 0 ? (
+        <div style={{ padding: "40px 0", textAlign: "center", color: C.textMuted, fontSize: "14px" }}>
+          No saved skits yet.<br />Generate and save one!
+        </div>
+      ) : scripts.map((item) => {
+        const script = typeof item.result === "string" ? parseResult(item.result).script : (item.result?.script || "");
+        return (
+          <div key={item.id} style={{ background: C.surface1, border: `1px solid ${C.borderSoft}`, borderRadius: "8px", padding: "14px", marginBottom: "10px" }}>
+            <div style={{ fontSize: "14px", fontWeight: 700, color: "#eee", marginBottom: "4px" }}>{item.topic || "Untitled"}</div>
+            <div style={{ fontSize: "12px", color: C.textMuted, marginBottom: "12px", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+              {script.slice(0, 140)}{script.length > 140 ? "…" : ""}
+            </div>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button onClick={() => onOpen(item)} style={{ flex: 1, padding: "8px", borderRadius: "8px", border: "none", background: C.accent, color: "#1a1200", fontSize: "12px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Open</button>
+              <button onClick={() => onCopy(item)} style={{ padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "transparent", color: C.textSecondary, fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}>Copy</button>
+              <button onClick={() => setConfirmDeleteId(item.id)} style={{ padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "transparent", color: C.textMuted, fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}>Delete</button>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -379,8 +623,7 @@ function SavedPanel({ scripts, onOpen, onCopy, onDelete, onClose }) {
 ============================================================ */
 
 export default function SkitGen() {
-  const [provider, setProvider] = useState("gemini");
-  const [view, setView] = useState("generate");
+    const [view, setView] = useState("generate");
   const [bootLoading, setBootLoading] = useState(true);
   const [bootError, setBootError] = useState(null);
 
@@ -390,13 +633,26 @@ export default function SkitGen() {
   const [result, setResult] = useState(null);
   const [lastUsage, setLastUsage] = useState(null);
   const [loading, setLoading] = useState(false);
+  // Mirrored up from <ModelSelect> (lib/ModelSelect.js), which owns fetching
+  // the live OpenRouter catalog and persisting the choice — this is just the
+  // current value so generate() can thread it into script/refine calls.
+  const [openrouterModel, setOpenrouterModel] = useState(null);
+  // "openrouter" | "gemini" — also mirrored up from <ModelSelect>. When
+  // "gemini", script/refine bypass OpenRouter entirely and call this app's
+  // own Gemini API key directly instead.
+  const [genSource, setGenSource] = useState("openrouter");
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
   const [lastModeUsed, setLastModeUsed] = useState(null);
 
   const [ideas, setIdeas] = useState(null);
   const [ideasLoading, setIdeasLoading] = useState(false);
+  // Premises shown across this session's "refresh ideas" clicks, so the next
+  // request can tell the model what to avoid repeating. Capped so the prompt
+  // doesn't grow unbounded over a long session.
+  const [recentIdeaPremises, setRecentIdeaPremises] = useState([]);
   const [showIdeas, setShowIdeas] = useState(false);
+  const [ideaScenario, setIdeaScenario] = useState("");
 
   const [suggestedTone, setSuggestedTone] = useState(null);
   const [toneReason, setToneReason] = useState(null);
@@ -406,7 +662,7 @@ export default function SkitGen() {
   const [showFeedback, setShowFeedback] = useState(false);
 
   const [savedScripts, setSavedScripts] = useState([]);
-  const [savedOpen, setSavedOpen] = useState(false);
+  const [openedSavedItem, setOpenedSavedItem] = useState(null);
   const [savedThisResult, setSavedThisResult] = useState(false);
   const [savingScript, setSavingScript] = useState(false);
 
@@ -431,17 +687,6 @@ export default function SkitGen() {
   const [expandedSampleId, setExpandedSampleId] = useState(null);
 
   // Provider preference is shared through Neon and persists across devices.
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/settings")
-      .then(async (res) => {
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.error || "Failed to load provider setting.");
-        if (!cancelled && (data?.solo === "gemini" || data?.solo === "anthropic")) setProvider(data.solo);
-      })
-      .catch((err) => console.warn("Provider setting load failed:", err));
-    return () => { cancelled = true; };
-  }, []);
 
   // Initial load from Neon
   useEffect(() => {
@@ -520,7 +765,7 @@ export default function SkitGen() {
   const analyzeSample = async (sample) => {
     try {
       const formatInfo = sample.format ? FORMATS.find((f) => f.id === sample.format) : null;
-      const { analysis } = await apiGenerate("analyzeSample", { content: sample.content, title: sample.title, formatLabel: formatInfo?.label || null, formatDesc: formatInfo?.desc || null }, null, provider);
+      const { analysis } = await apiGenerate("analyzeSample", { content: sample.content, title: sample.title, formatLabel: formatInfo?.label || null, formatDesc: formatInfo?.desc || null });
       const updated = await apiUpdateSample(sample.id, { analysis });
       setSamples((prev) => prev.map((s) => (s.id === sample.id ? updated : s)));
       return true;
@@ -585,12 +830,12 @@ export default function SkitGen() {
 
       if (forceFull || !comedyDNA) {
         setTrainingStatus(`Synthesizing Comedy DNA from ${readySamples.length} analyzed sample${readySamples.length === 1 ? "" : "s"}...`);
-        const res = await apiGenerate("synthesizeDNA", { analyses: readySamples.map((s) => { const fi = s.format ? FORMATS.find((f) => f.id === s.format) : null; return { ...s, formatLabel: fi?.label || null, formatDesc: fi?.desc || null }; }), baseProfileSummary }, null, provider);
+        const res = await apiGenerate("synthesizeDNA", { analyses: readySamples.map((s) => { const fi = s.format ? FORMATS.find((f) => f.id === s.format) : null; return { ...s, formatLabel: fi?.label || null, formatDesc: fi?.desc || null }; }), baseProfileSummary });
         dna = res.dna;
         coveredIds = readySamples.map((s) => s.id);
       } else {
         setTrainingStatus(`Updating Comedy DNA with ${newSamples.length} new sample${newSamples.length === 1 ? "" : "s"} (not resending the whole corpus)...`);
-        const res = await apiGenerate("updateDNA", { existingDNA: comedyDNA, newAnalyses: newSamples.map((s) => { const fi = s.format ? FORMATS.find((f) => f.id === s.format) : null; return { ...s, formatLabel: fi?.label || null, formatDesc: fi?.desc || null }; }) }, null, provider);
+        const res = await apiGenerate("updateDNA", { existingDNA: comedyDNA, newAnalyses: newSamples.map((s) => { const fi = s.format ? FORMATS.find((f) => f.id === s.format) : null; return { ...s, formatLabel: fi?.label || null, formatDesc: fi?.desc || null }; }) });
         dna = res.dna;
         coveredIds = Array.from(new Set([...includedSampleIds, ...newSamples.map((s) => s.id)]));
       }
@@ -685,7 +930,7 @@ export default function SkitGen() {
     if (!script || avoidSubmitting) return;
     setAvoidSubmitting(true);
     try {
-      const { note } = await apiGenerate("distillAvoidNote", { script, reason }, null, provider);
+      const { note } = await apiGenerate("distillAvoidNote", { script, reason });
       if (!note?.trim()) throw new Error("Couldn't create an Avoid note from this result.");
       const res = await fetch("/api/avoid-notes", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -716,8 +961,20 @@ export default function SkitGen() {
     setShowIdeas(true);
     setIdeas(null);
     try {
-      const { ideas: got } = await apiGenerate("ideas", { formatLabel: formatInfo.label, formatDesc: formatInfo.desc, dna: comedyDNA, avoidNotes }, null, provider);
+      const { ideas: got } = await apiGenerate("ideas", {
+        formatLabel: formatInfo.label,
+        formatDesc: formatInfo.desc,
+        dna: comedyDNA,
+        avoidNotes,
+        recentPremises: recentIdeaPremises,
+        scenario: ideaScenario,
+      });
       setIdeas(got);
+      if (Array.isArray(got) && got.length) {
+        // Cap at 25 remembered premises so the prompt doesn't grow unbounded
+        // across a long session of repeated refreshes.
+        setRecentIdeaPremises((prev) => [...prev, ...got.map((i) => i.premise).filter(Boolean)].slice(-25));
+      }
     } catch {
       setIdeas([]);
     } finally {
@@ -731,7 +988,7 @@ export default function SkitGen() {
     setSuggestedTone(null);
     setToneReason(null);
     try {
-      const { tone, reason } = await apiGenerate("tone", { topic: topicText, formatLabel: formatInfo.label, formatDesc: formatInfo.desc, dna: comedyDNA }, null, provider);
+      const { tone, reason } = await apiGenerate("tone", { topic: topicText, formatLabel: formatInfo.label, formatDesc: formatInfo.desc, dna: comedyDNA });
       setSuggestedTone(tone);
       setToneReason(reason);
     } catch {
@@ -760,13 +1017,18 @@ export default function SkitGen() {
       let data;
 
       if (withFeedback && result) {
-        const currentScript = parseResult(result).script || result;
+        // Pass the whole stored result through (JSON or legacy plaintext) —
+        // see buildRefinePrompt: the model is asked to always return the
+        // current JSON schema, so this also upgrades a legacy-format saved
+        // script the moment it's refined.
         data = await apiGenerate("refine", {
-          originalScript: currentScript,
+          originalResult: result,
           feedback,
           dna: comedyDNA,
           selectedMode: lastModeUsed,
-        }, null, provider);
+          openrouterModel,
+          useGemini: genSource === "gemini",
+        });
       } else {
         const formatInfo = FORMATS.find((f) => f.id === format);
         const voiceClips = samples
@@ -782,7 +1044,9 @@ export default function SkitGen() {
           dna: comedyDNA,
           avoidNotes,
           voiceClips,
-        }, null, provider);
+          openrouterModel,
+          useGemini: genSource === "gemini",
+        });
 
         const modeFromResult = data.result ? parseResult(data.result).mode : null;
         setLastModeUsed(modeFromResult || null);
@@ -833,13 +1097,11 @@ export default function SkitGen() {
   };
 
   const openSavedScript = (item) => {
-    setResult(typeof item.result === "string" ? item.result : item.result?.script || "");
-    setTopic(item.topic || "");
-    setContext(item.context || "");
-    if (item.format) setFormat(item.format);
-    setLastModeUsed(item.modeUsed || null);
-    setSavedThisResult(true);
-    setSavedOpen(false);
+    // Opening a saved skit shows it right there in the Saved tab (see
+    // SavedView's detail mode below) — it no longer touches the Generate
+    // tab's topic/context/format/result state, so the generator fields stay
+    // exactly as the user left them and the user stays on the Saved page.
+    setOpenedSavedItem(item);
   };
 
   const copySavedScript = (item) => {
@@ -847,10 +1109,18 @@ export default function SkitGen() {
     copyToClipboard(text || "");
   };
 
+  const copySavedScriptText = (text) => {
+    copyToClipboard(text, () => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
   const deleteSavedScript = async (id) => {
     try {
       await apiDeleteSaved(id);
       setSavedScripts((prev) => prev.filter((s) => s.id !== id));
+      setOpenedSavedItem((prev) => (prev && prev.id === id ? null : prev));
     } catch (err) {
       setError(err?.message || "Failed to delete saved skit.");
     }
@@ -877,22 +1147,12 @@ export default function SkitGen() {
   return (
     <div style={S.page}>
 
-      {savedOpen && (
-        <SavedPanel
-          scripts={savedScripts}
-          onOpen={openSavedScript}
-          onCopy={copySavedScript}
-          onDelete={deleteSavedScript}
-          onClose={() => setSavedOpen(false)}
-        />
-      )}
-
       <div className="header-shell" style={{ padding: "24px 28px 0", borderBottom: `1px solid ${C.borderSoft}` }}>
         {/* Global Solo/Couple mode switcher — page-specific tabs (GENERATE /
             COMEDY DNA / SAVED) stay below, unaffected. Separate app, separate
             DNA, separate everything under the hood — this is just navigation. */}
         <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "14px" }}>
-          <ModeSwitcher active="solo" /><ProviderSwitcher app="solo" provider={provider} onChange={setProvider} />
+          <ModeSwitcher active="solo" />
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", paddingBottom: "20px", gap: "12px", flexWrap: "wrap" }}>
           <div>
@@ -911,11 +1171,11 @@ export default function SkitGen() {
           {[["generate", "GENERATE"], ["dna", "COMEDY DNA"], ["saved", `SAVED${savedScripts.length > 0 ? ` (${savedScripts.length})` : ""}`]].map(([id, label]) => (
             <button
               key={id}
-              onClick={() => id === "saved" ? setSavedOpen(true) : setView(id)}
+              onClick={() => { if (id !== "saved") setOpenedSavedItem(null); setView(id); }}
               style={{
                 padding: "12px 18px", minHeight: "44px", background: "transparent", border: "none",
-                borderBottom: (id === "saved" ? savedOpen : view === id) ? `2px solid ${C.accent}` : "2px solid transparent",
-                color: (id === "saved" ? savedOpen : view === id) ? "#fff" : C.textFaint, fontSize: "12px", fontWeight: "700",
+                borderBottom: view === id ? `2px solid ${C.accent}` : "2px solid transparent",
+                color: view === id ? "#fff" : C.textFaint, fontSize: "12px", fontWeight: "700",
                 letterSpacing: "1.5px", cursor: "pointer", fontFamily: "inherit", transition: "all 0.2s",
               }}
             >
@@ -933,34 +1193,6 @@ export default function SkitGen() {
         {view === "generate" ? (
           <>
             <div style={S.section}>
-              <span style={S.sectionLabel}>FORMAT</span>
-              <div className="format-grid">
-                {FORMATS.map((f) => {
-                  const selected = format === f.id;
-                  return (
-                    <button
-                      key={f.id}
-                      onClick={() => { setFormat(f.id); setSuggestedTone(null); setToneReason(null); }}
-                      className={`format-card ${selected ? "is-selected" : ""}`}
-                      style={{
-                        padding: "14px 8px", borderRadius: "8px",
-                        border: selected ? `1px solid ${C.accent}` : `1px solid ${C.borderSoft}`,
-                        background: selected ? "rgba(240,180,41,0.08)" : C.surface1,
-                        color: selected ? "#fff" : C.textSecondary,
-                        cursor: "pointer", fontFamily: "inherit", textAlign: "center",
-                        lineHeight: "1.4", minHeight: "76px",
-                      }}
-                    >
-                      <div style={{ fontSize: "18px", marginBottom: "5px" }}>{f.icon}</div>
-                      <div style={{ fontWeight: "700", fontSize: "11px", color: selected ? C.accent : C.textSecondary }}>{f.label}</div>
-                      <div style={{ fontSize: "10px", opacity: 0.65, marginTop: "3px" }}>{f.desc}</div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div style={S.section}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
                 <span style={{ ...S.sectionLabel, marginBottom: 0 }}>WHAT'S IT ABOUT</span>
               </div>
@@ -971,10 +1203,16 @@ export default function SkitGen() {
                 rows={4}
                 style={{ ...S.input, resize: "vertical", lineHeight: "1.6", padding: "14px 16px", fontSize: "16px" }}
               />
-              <div style={{ display: "flex", gap: "16px", marginTop: "10px" }}>
+              <div style={{ display: "flex", gap: "16px", marginTop: "10px", alignItems: "center", flexWrap: "wrap" }}>
                 <GhostButton onClick={generateIdeas} disabled={ideasLoading} style={{ color: ideasLoading ? C.textFaint : C.textMuted, padding: "2px 0" }}>
                   {ideasLoading ? "thinking..." : "✦ Need inspiration? Suggest an idea"}
                 </GhostButton>
+                <input
+                  value={ideaScenario}
+                  onChange={(e) => setIdeaScenario(e.target.value)}
+                  placeholder="about a topic? (e.g. relationship, work)"
+                  style={{ ...S.input, flex: "1 1 200px", minWidth: "160px", padding: "6px 10px", fontSize: "12px" }}
+                />
               </div>
             </div>
 
@@ -1003,6 +1241,34 @@ export default function SkitGen() {
                 )}
               </div>
             )}
+
+            <div style={S.section}>
+              <span style={S.sectionLabel}>FORMAT</span>
+              <div className="format-grid">
+                {FORMATS.map((f) => {
+                  const selected = format === f.id;
+                  return (
+                    <button
+                      key={f.id}
+                      onClick={() => { setFormat(f.id); setSuggestedTone(null); setToneReason(null); }}
+                      className={`format-card ${selected ? "is-selected" : ""}`}
+                      style={{
+                        padding: "14px 8px", borderRadius: "8px",
+                        border: selected ? `1px solid ${C.accent}` : `1px solid ${C.borderSoft}`,
+                        background: selected ? "rgba(240,180,41,0.08)" : C.surface1,
+                        color: selected ? "#fff" : C.textSecondary,
+                        cursor: "pointer", fontFamily: "inherit", textAlign: "center",
+                        lineHeight: "1.4", minHeight: "76px",
+                      }}
+                    >
+                      <div style={{ fontSize: "18px", marginBottom: "5px" }}>{f.icon}</div>
+                      <div style={{ fontWeight: "700", fontSize: "11px", color: selected ? C.accent : C.textSecondary }}>{f.label}</div>
+                      <div style={{ fontSize: "10px", opacity: 0.65, marginTop: "3px" }}>{f.desc}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
 
             <div style={S.section}>
               <span style={S.sectionLabel}>VIBE</span>
@@ -1046,6 +1312,10 @@ export default function SkitGen() {
               />
             </div>
 
+            <div style={{ marginBottom: "14px" }}>
+              <ModelSelect app="solo" onChange={setOpenrouterModel} onSourceChange={setGenSource} />
+            </div>
+
             <PrimaryButton
               onClick={() => generate(false)}
               disabled={loading || !topic.trim()}
@@ -1067,35 +1337,19 @@ export default function SkitGen() {
                   {parsed.style && <span style={S.chip}>{parsed.style}</span>}
                   {parsed.lang && <span style={S.chip}>{parsed.lang}</span>}
                   {lastModeUsed && <span style={{ ...S.chip, color: C.success, borderColor: "#1a3a1a" }}>{lastModeUsed}</span>}
-                  {lastUsage && formatTokenUsage(lastUsage) && <span style={{ ...S.chip, color: C.textMuted }}>{formatTokenUsage(lastUsage)}</span>}
+                  {parsed.filming_difficulty && <span style={S.chip}>📹 {parsed.filming_difficulty}</span>}
                 </div>
 
                 {parsed.script && (
-                  <div style={{ ...S.card, marginTop: "4px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
-                      <span style={{ fontSize: "12px", letterSpacing: "1.5px", color: C.textMuted, fontWeight: 700 }}>YOUR SKIT</span>
-                      <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
-                        <GhostButton onClick={() => copyScript(parsed.script)} style={{ color: copied ? C.success : C.textMuted }}>
-                          {copied ? "copied ✓" : "copy"}
-                        </GhostButton>
-                        <button
-                          onClick={saveCurrentScript}
-                          disabled={savingScript || savedThisResult}
-                          style={{
-                            padding: "6px 13px", borderRadius: "8px",
-                            border: `1px solid ${savedThisResult ? C.success : C.border}`,
-                            background: savedThisResult ? `${C.success}15` : "transparent",
-                            color: savedThisResult ? C.success : C.textMuted,
-                            fontSize: "12px", fontWeight: 600, cursor: savingScript || savedThisResult ? "default" : "pointer",
-                            fontFamily: "inherit", transition: "all 0.15s",
-                          }}
-                        >
-                          {savedThisResult ? "✓ saved" : savingScript ? "saving…" : "save"}
-                        </button>
-                      </div>
-                    </div>
-                    <ScriptBody text={parsed.script} />
-                  </div>
+                  <SoloResultTabs
+                    parsed={parsed}
+                    usage={lastUsage}
+                    copied={copied}
+                    onCopy={copyScript}
+                    onSave={saveCurrentScript}
+                    saving={savingScript}
+                    saved={savedThisResult}
+                  />
                 )}
 
                 {parsed.script && (
@@ -1169,6 +1423,17 @@ export default function SkitGen() {
               </div>
             )}
           </>
+        ) : view === "saved" ? (
+          <SavedView
+            scripts={savedScripts}
+            openedItem={openedSavedItem}
+            onOpen={openSavedScript}
+            onCloseDetail={() => setOpenedSavedItem(null)}
+            onCopy={copySavedScript}
+            onCopyText={copySavedScriptText}
+            copied={copied}
+            onDelete={deleteSavedScript}
+          />
         ) : (
           <ComedyDNAView
             samples={samples}

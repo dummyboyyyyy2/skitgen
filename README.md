@@ -53,19 +53,7 @@ npm run dev
 
 Open http://localhost:3000
 
-## 4. Choose the provider
-
-Both generator headers have a **Gemini / Anthropic** provider switcher.
-
-The selections are independent:
-
-- Solo can use Gemini while Couple uses Anthropic.
-- Couple can use Gemini while Solo uses Anthropic.
-- Changing one generator's setting does not change the other generator's setting.
-
-The setting is saved through `/api/settings` into Neon rather than only in browser `localStorage`.
-
-## 5. Deploy to Vercel
+## 4. Deploy to Vercel
 
 1. Push this folder to a GitHub repo.
 2. Import the repo at https://vercel.com/new
@@ -80,7 +68,7 @@ The setting is saved through `/api/settings` into Neon rather than only in brows
 
 All provider API calls happen server-side. API keys and the Neon connection string are not exposed to the browser.
 
-## 6. Install it on your phone (PWA)
+## 5. Install it on your phone (PWA)
 
 Once deployed to Vercel (PWA install requires HTTPS — `localhost` won't prompt), the site is installable like a native app:
 
@@ -94,6 +82,28 @@ Installed, it opens full-screen with no browser chrome, uses the SKIT GEN icon, 
 - This is built for single-user personal use — there's no login. If you don't want the URL to be publicly usable by anyone who finds it, consider adding Vercel's password protection (Pro plans) or a simple shared-secret gate.
 - Solo's existing table names are unchanged, so existing Neon data remains usable. Couple data uses separate `couple_*` tables.
 - Comedy DNA and samples are stored in Neon. Couple's saved ideas and tone notes are also stored in Neon.
-- The provider selection for Solo and Couple is stored separately in the `settings` table.
 - Gemini's free-tier request and daily limits vary by model. The Gemini lite/full split is used for both generators; training/DNA analysis can be heavier than ordinary idea or script generation.
-- The `scripts` table in `lib/schema.sql` remains unused; script logging is outside this plan.
+- The `scripts` table in `lib/schema.sql` backs Solo's saved-scripts feature (see `app/api/saved/route.js`).
+
+
+## Solo AI routing
+
+SkitGen Solo now routes AI by task instead of exposing a provider choice:
+- Gemini: ideas, tone, sample analysis, Comedy DNA, Avoid-note distillation, and other structured tasks.
+- OpenRouter: script generation and script refinement.
+
+Set `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` in the server environment. The default model is `google/gemma-4-31b-it:free`; change the model slug to test another OpenRouter model without changing application code.
+
+## Couple AI routing
+
+The Couple Content Generator (`/couples`, `/api/couple`) follows the same task-based routing as Solo, using its own prompts, schemas, and DNA:
+- Gemini: ideas, vibe, tone, sample analysis, Couple Comedy DNA synthesis/update, and Avoid-note distillation.
+- OpenRouter: script generation and script refinement.
+
+This uses the same `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` and `GEMINI_API_KEY` / `GEMINI_MODEL_LITE` environment variables as Solo — no separate keys are needed. Couple's prompts, DNA schema, verification rules, and output format remain entirely separate from Solo's; only the underlying provider plumbing is shared. See `AI-CODING-GUIDELINES.md` for the full architecture rules.
+
+## AI coding / maintenance guidance
+
+**Read `AI-CODING-GUIDELINES.md` before modifying the code with an AI coding agent.**
+
+Solo and Couple intentionally use the same backend architecture but remain separate creative systems. The rule is: **same engine discipline, different creative brains**. Architectural/pipeline improvements should generally be ported to both generators; prompts, DNA schemas, creative rules, examples, and output semantics must remain mode-specific.
