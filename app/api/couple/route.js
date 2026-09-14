@@ -57,7 +57,7 @@ export async function POST(req) {
           provider,
           prompt: buildCoupleIdeaPrompt(formatLabel, formatDesc, dna, avoidNotes),
           maxTokens: 900,
-          options: { temperature: 0.85 },
+          options: { temperature: 0.85, json: true },
         });
         const parsed = safeJSONParse(ai.text, []);
         return Response.json({ ideas: Array.isArray(parsed) ? parsed : [], usage: ai.usage });

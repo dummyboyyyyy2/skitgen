@@ -49,7 +49,7 @@ export async function POST(req) {
         // Ideas used to run on the lite model tier — cheaper/faster, but a
         // meaningfully weaker model than the one that actually writes scripts.
         // Idea quality/voice-fit matters too much here to keep that tradeoff.
-        const ai = await callAI({ provider, prompt: buildIdeaPrompt(formatLabel, formatDesc, dna, avoidNotes), maxTokens: 900, options: { temperature: 0.8 } });
+        const ai = await callAI({ provider, prompt: buildIdeaPrompt(formatLabel, formatDesc, dna, avoidNotes), maxTokens: 900, options: { temperature: 0.8, json: true } });
         const parsed = safeJSONParse(ai.text, []);
         return Response.json({ ideas: Array.isArray(parsed) ? parsed : [], usage: ai.usage });
       }
