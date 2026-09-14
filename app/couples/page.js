@@ -2,10 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import ModeSwitcher from "@/lib/ModeSwitcher";
-import ProviderSwitcher from "@/lib/ProviderSwitcher";
-import {
-  summarizeDNAForPrompt,
-} from "@/lib/prompts";
+import ModelSelect from "@/lib/ModelSelect";
 
 // Cap on how many samples can feed the Couple Comedy DNA per training run —
 // separate cap from Solo's own (app/page.js). Past this, more samples tend to
@@ -163,97 +160,7 @@ const LOADING_MSGS = [
 
 // ─── SYSTEM PROMPT ─────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are a short-form couple-content writer and comedy director.
 
-Your job is NOT to write generic "TikTok comedy," sitcom dialogue, polished stand-up jokes, or content that sounds AI-generated.
-
-Your job is to create short, highly relatable, filmable couple content that feels like something a real couple accidentally captured on camera.
-
-The viewer should recognize the behavior immediately and think: "THAT IS SO US."
-
-CHARACTER LOGIC CREATES THE COMEDY.
-Do not start with "What joke can I make?" Start with "What would THIS person naturally do?"
-A petty person was already going to be petty. A literal person genuinely misunderstands. A competitive person turns something meaningless into a competition. An overthinker creates a problem from nothing. A calm person becomes funnier by refusing to react. The humor comes from the collision between personalities.
-
-RELATIONSHIP DYNAMICS (infer, don't force):
-Before writing, silently build a working picture of these two specific people together: who tends to initiate conflict, who's more reasonable, who's more confident, who misunderstands or takes things literally, who escalates and who backs down, who refuses to admit they're wrong, who notices the absurdity first, what one already knows or can predict about the other, what quietly annoys one about the other, how each reacts when embarrassed or challenged. Use whatever the user has told you about them as a starting point, but infer the rest from the situation itself rather than defaulting to a fixed straight-man-plus-chaos-agent formula. The relationship can shift by moment — the usually-calm one can be the one who escalates this time, if that's genuinely funnier here.
-
-COMEDIC DECISION LAYER (do this silently, never show your work):
-Before writing dialogue, work out: what's actually happening; what does each person genuinely want; what does each person believe; where do those beliefs or goals collide; what's the most interesting contradiction; what would these two specific people naturally do about it; what's the funniest believable consequence; where should it escalate, and where should it stop. This is a comedic decision, not a punchline you're assembling backward from — the scene should feel like it grew out of the collision, not like a joke that got a setup built for it.
-
-NATURAL DIALOGUE:
-Use contractions, interruptions, unfinished thoughts, short answers, "what?", "nothing.", "okay.", "I didn't say that.", silence. Annoyed people rarely explain themselves.
-Bad: "I feel like you don't respect my boundaries."
-Better: "Did you move my charger?" / "Which one?" / "The one I was using." / "You weren't using it." / "I was about to."
-If a line feels written, shorten it. If everyone sounds equally witty, fix the voices. Not every line needs to be funny. Sometimes the funniest line is completely ordinary.
-
-SUBTEXT: Characters do not explain the joke. If someone is angry: "I'm fine." Not: "I am angry because..." If someone is losing an argument, they change the subject.
-
-VISUAL COMEDY — look for: staring without speaking, slowly putting something down, walking away mid-sentence, opening the fridge again, silently handing someone an object, refusing eye contact, continuing an activity while arguing, immediately changing behavior after being caught, one person already knowing what's happening. Use physical behavior whenever it's funnier than another line of dialogue. Do not overload the script with stage directions. The camera observes; it does not editorialize.
-
-ESCALATION: Comes from what already happened. Every step should feel like "of course they would do that." Not random. The ending should feel inevitable in hindsight.
-
-BAIT & SWITCH — the setup must genuinely make the viewer think the video is going somewhere else. The BAIT looks romantic, emotional, serious, or important. The SWITCH reveals the real issue is mundane, petty, or extremely couple-specific. Build the entire video around the misleading setup and the deflating reveal — not just a funny last line.
-Examples: Slow romantic music + serious approach → "Did you move my charger?" / "We need to talk." → who reorganized the snack drawer / looks like a proposal → he found a parking spot in front of the restaurant / she gets emotional → he asked if she wanted the last bite.
-
-COMEDY FLAVORS:
-DRY/DEADPAN: The lack of reaction is the joke. Awkward silence can be the punchline. No exaggerated sitcom reactions. One person can say something absurd while the other responds completely seriously.
-PETTY: Tiny inconsistencies. Selective memory. Scorekeeping. Technically correct arguments. Quiet revenge. Exposing hypocrisy. The more specific, the funnier. Never genuinely cruel.
-CHAOTIC: Start ordinary. One bad decision causes another. Characters become increasingly committed to a stupid position. Chaos must have internal logic — do not insert random weirdness.
-WHOLESOME: Warmth through behavior, not speeches. Never cheesy. Never sentimental.
-AWKWARD: Silence, hesitation, failed recovery, things left unsaid, secondhand embarrassment.
-COMPETITIVE: A meaningless situation becomes a serious contest because neither person wants to lose.
-SARCASTIC: Dry observations, literal responses to rhetorical questions, controlled irritation. No constant one-liners.
-
-FORMAT:
-ACTED SKIT: Dialogue, reactions, physical behavior, character contrast, timing, escalation, visual beats.
-TEXT OVERLAY: Visual storytelling, short on-screen text beats, recognizable observations, minimal spoken dialogue. Do NOT generate a normal conversation when Text Overlay is selected.
-
-FILMABILITY: Everything should be filmable with a phone in a normal location. No special effects, no expensive props, no complicated setups. If a joke can be made funnier through a simple physical action, prefer that over complicated writing.
-
-HOOK: Start as close to the interesting behavior as possible. Do not introduce the couple. Do not open with "Hey guys", "So today", or "POV" unless the format genuinely needs it. Start in the middle of something already happening.
-
-ENDING: Never simply stop after the conflict. The final beat should be a realization, reversal, silent look, unexpected action, callback, petty victory, or character doubling down. Do not explain why it's funny. Let it land.
-
-AVOID GENERIC COUPLE HUMOR: no "men are like this / women are like this," no generic boyfriend-girlfriend or husband-wife stereotypes, no arguing just to argue, no wall-to-wall sarcasm, no absurdity without a specific character reason for it, no one-liner tacked onto the end of every scene, no character explaining the joke or saying how funny something is, no forced misunderstanding a normal person would clear up in one sentence. These read as generic AI couple content, not as this specific pair of people.
-
-ANTI-AI FILTER — silently check before finalizing:
-Does this sound like something a real couple might actually do?
-Does each character have a distinct personality?
-Could every line be spoken naturally out loud?
-Is the situation specific enough?
-Is the comedy coming from behavior rather than explanation?
-Is there unnecessary dialogue that a visual moment could replace?
-Does the ending actually land?
-Does anything sound like a sitcom writer trying too hard?
-Does anything sound like an AI being funny?
-If yes to any — rewrite it. Do not make everything loud, chaotic, or witty. Some of the funniest videos are quiet. Sometimes one look is enough.
-
-SETTINGS = CREATIVE DIRECTION, NOT A CHECKLIST: Do not mechanically demonstrate each selected setting. Let the traits naturally shape how characters behave. The final idea should feel like one coherent piece of comedy, not a combination of UI selections.
-
-CREATOR STYLE NOTES: If provided, treat them as the highest priority. They describe this creator's actual taste, rhythm, cultural context, and preferred style. Prioritize those notes over generic comedy conventions. The goal is comedy THIS creator would actually post.
-
-WHEN NO SITUATION IS PROVIDED: Invent a highly recognizable everyday couple situation — food, sleep, chores, getting ready, driving, temperature, blankets, TV choices, forgetting things, miscommunication, "nothing", "I'm fine", the last bite, who said what, selective memory. Then find the specific behavior inside it. Do not choose a random gimmick.
-
-OUTPUT: Return ONLY valid JSON. No markdown fences. No commentary outside the JSON.
-
-{
-  "title": "Short intriguing title that does not give away the joke",
-  "hook": "Exact first 2-3 seconds — the specific opening moment or line that stops the scroll",
-  "characters": [{"role": "Partner A", "trait": "One precise personality trait"}, {"role": "Partner B", "trait": "One precise personality trait"}],
-  "premise": "One sentence describing the comedy engine, not a generic plot summary",
-  "setup": "Start in the middle of the situation. Do not introduce the couple.",
-  "beats": ["Beat 1 — what happens", "Beat 2", "Beat 3", "Beat 4 — turn or escalation"],
-  "script": "Full filmable script. Dialogue should sound natural, clipped, interrupted, human. [brackets] only for minimal essential physical actions. For Text Overlay, each text beat on its own line.",
-  "visual_actions": ["Physical comedy moment 1", "moment 2", "moment 3"],
-  "shot_list": ["Shot 1 — what is framed and why", "Shot 2", "Shot 3"],
-  "estimated_runtime": "e.g. 15-25 seconds",
-  "filming_difficulty": "Easy",
-  "props": [],
-  "ending": "The final comedic beat described plainly — what lands last",
-  "caption": "Punchy TikTok caption under 150 characters, no generic hooks",
-  "hashtags": ["couplecomedy", "relatable", "6-8 more relevant hashtags without the # symbol"]
-}`;
 
 // ─── COLORS ────────────────────────────────────────────────────────────────
 
@@ -310,11 +217,11 @@ function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
 function formatAIError(data, status) {
   if (data?.code === "RATE_LIMIT_EXHAUSTED") {
-    const providerName = data.provider === "anthropic" ? "Anthropic" : "Gemini";
+    const providerName = data.provider === "openrouter" ? "OpenRouter" : data.provider === "anthropic" ? "Anthropic" : "Gemini";
     const wait = Number.isFinite(Number(data.retryAfter)) && Number(data.retryAfter) > 0
       ? ` The provider asked us to wait about ${Math.ceil(Number(data.retryAfter))} seconds.`
       : "";
-    return `${providerName} rate limit reached — this API is temporarily maxed out for this request.${wait} Please wait a little and try again, or switch to the other AI provider.`;
+    return `${providerName} rate limit reached — this API is temporarily maxed out for this request.${wait} Please wait a little and try again.`;
   }
   return data?.error || `API error ${status} — please try again.`;
 }
@@ -327,11 +234,11 @@ function formatTokenUsage(usage) {
 // Calls our own /api/couple route (server holds ANTHROPIC_API_KEY) instead of
 // api.anthropic.com directly — the browser can't call Anthropic's API on its
 // own (no key, and it's not CORS-enabled for direct client calls).
-async function callAPI(messages, provider = null, options = {}) {
+async function callAPI(action, payload = {}) {
   const res = await fetch("/api/couple", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ system: SYSTEM_PROMPT, messages, maxTokens: options.maxTokens || 3000, ...(options.temperature !== undefined ? { temperature: options.temperature } : {}), ...(options.verify ? { verify: true } : {}), ...(provider ? { provider } : {}) }),
+    body: JSON.stringify({ action, ...payload }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -340,7 +247,7 @@ async function callAPI(messages, provider = null, options = {}) {
     err.provider = data?.provider;
     throw err;
   }
-  return { text: data.text || "", usage: data.usage || null };
+  return { text: data.text || "", usage: data.usage || null, data };
 }
 
 // Couple persistence is Neon-backed. The browser only keeps transient UI state;
@@ -742,7 +649,7 @@ function DnaSampleStatusBadge({ sample, isIncluded }) {
   return <span style={{ fontSize: "11px", color: C.mid, fontWeight: 600 }}>✓ ANALYZED</span>;
 }
 
-function DnaTrainer({ dnaProfile, onProfileUpdate, provider, avoidNotes = [], deleteAvoidNote }) {
+function DnaTrainer({ dnaProfile, onProfileUpdate, avoidNotes = [], deleteAvoidNote }) {
   const [samples, setSamples] = useState([]);
   const [loadingSamples, setLoadingSamples] = useState(true);
   const [sampleTitle, setSampleTitle] = useState("");
@@ -839,12 +746,7 @@ function DnaTrainer({ dnaProfile, onProfileUpdate, provider, avoidNotes = [], de
     const res = await fetch("/api/couple", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        system: "__COUPLE_DNA_ACTION__",
-        provider: provider,
-        maxTokens,
-        messages: [{ role: "user", content: JSON.stringify(payload) }],
-      }),
+      body: JSON.stringify({ ...payload, maxTokens }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -1480,7 +1382,6 @@ function DnaTrainer({ dnaProfile, onProfileUpdate, provider, avoidNotes = [], de
 // ─── MAIN APP ──────────────────────────────────────────────────────────────
 
 export default function CoupleContentGeneratorPage() {
-  const [provider, setProvider] = useState("anthropic");
   const [situation, setSituation] = useState("");
   const [vibe, setVibe] = useState(null);
   const [vibeReason, setVibeReason] = useState(null);
@@ -1502,17 +1403,7 @@ export default function CoupleContentGeneratorPage() {
   const [avoidNotes, setAvoidNotes] = useState([]);
   const [avoidSubmitting, setAvoidSubmitting] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/settings")
-      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
-      .then(({ ok, data }) => {
-        if (!ok) throw new Error(data?.error || "Failed to load AI provider setting.");
-        if (!cancelled && (data?.couple === "gemini" || data?.couple === "anthropic")) setProvider(data.couple);
-      })
-      .catch((err) => console.warn("Provider setting load failed:", err));
-    return () => { cancelled = true; };
-  }, []);
+
 
   useEffect(() => {
     let cancelled = false;
@@ -1553,6 +1444,10 @@ export default function CoupleContentGeneratorPage() {
   };
 
   const [loading, setLoading] = useState(false);
+  // Mirrored up from <ModelSelect> (lib/ModelSelect.js), which owns fetching
+  // the live OpenRouter catalog and persisting the choice — this is just the
+  // current value so generate() can thread it into script/refine calls.
+  const [openrouterModel, setOpenrouterModel] = useState(null);
   const [loadingMsg, setLoadingMsg] = useState("");
   const [result, setResult] = useState(null);
   const [lastUsage, setLastUsage] = useState(null);
@@ -1577,37 +1472,33 @@ export default function CoupleContentGeneratorPage() {
     return () => clearInterval(loadingRef.current);
   }, [loading]);
 
-  const buildPrompt = () => {
-    const vibeObj = VIBES.find(x => x.id === vibe);
-    const locObj = LOCATIONS.find(x => x.id === location);
-    const dynObj = DYNAMICS.find(x => x.id === dynamic);
-    const bpObj = BLUEPRINTS.find(x => x.id === blueprint);
-    const formatObj = FORMATS.find(x => x.id === format);
-    const lines = [];
-    if (situation.trim()) lines.push(`SITUATION: ${situation.trim()}`);
-    else lines.push(`No situation provided. Invent a highly relatable couple situation that fits the selected settings. Make it feel like something real couples actually experience.`);
-    if (vibe && vibe !== "surprise-me") lines.push(`HUMOR MECHANISM: ${vibeObj?.label} — ${vibeObj?.desc}`);
-    else lines.push(`AI INSTRUCTION: Choose the humor mechanism that will make this situation funniest. Choose deliberately, not randomly.`);
-    lines.push(`FORMAT: ${formatObj?.label}${formatObj?.desc ? ` — ${formatObj.desc}` : ""}`);
-    if (location && location !== "ai") lines.push(`LOCATION: ${locObj?.label}`);
-    if (personalities.length > 0) lines.push(`PERSONALITY CONTRAST: ${personalities.join(" vs ")}`);
-    if (dynamic && dynamic !== "ai") lines.push(`RELATIONSHIP DYNAMIC: ${dynObj?.label}`);
-    if (intensity) lines.push(`INTENSITY: ${intensity}`);
-    if (flavor) lines.push(`FLAVOR/TONE: ${flavor}`);
-    if (blueprint && blueprint !== "ai") lines.push(`NARRATIVE BLUEPRINT: ${bpObj?.label}`);
-    if (creativeDna.trim()) lines.push(`CREATOR STYLE NOTES: ${creativeDna.trim()}`);
-    if (dnaProfile) lines.push(`\n═══ COMEDY DNA (HIGHEST PRIORITY — this couple's learned comedic instincts override generic advice) ═══\n${summarizeDNAForPrompt(dnaProfile, `${situation || ""} ${formatObj?.label || ""} ${flavor || ""}`)}\n═══ END COMEDY DNA ═══`);
-    if (avoidNotes.length > 0) lines.push(`\n═══ AVOID LIST (HIGHEST PRIORITY) ═══\n${avoidNotes.map((n) => `- ${n.note}`).join("\n")}\n═══ END AVOID LIST ═══`);
-    return lines.join("\n");
-  };
-
   const generate = async () => {
     setLoading(true);
     setResult(null);
     setErr(null);
     setSavedThisResult(false);
     try {
-      const ai = await callAPI([{ role: "user", content: buildPrompt() }], provider, { maxTokens: format === "text-overlay" ? 1800 : 3200, temperature: 0.9, verify: true });
+      const formatObj = FORMATS.find(f => f.id === format);
+      const locationObj = LOCATIONS.find(x => x.id === location);
+      const dynamicObj = DYNAMICS.find(x => x.id === dynamic);
+      const blueprintObj = BLUEPRINTS.find(x => x.id === blueprint);
+      const personalityLabels = personalities.map(id => PERSONALITIES.find(p => p.id === id)?.label).filter(Boolean);
+      const ai = await callAPI("script", {
+        formatLabel: formatObj?.label,
+        formatDesc: formatObj?.desc,
+        situation,
+        vibe: VIBES.find(v => v.id === vibe)?.label || null,
+        location: locationObj?.label || location,
+        personalityContrast: personalityLabels.join(" vs "),
+        dynamic: dynamicObj?.label || dynamic,
+        intensity,
+        flavor,
+        blueprint: blueprintObj?.label || blueprint,
+        creativeDna,
+        dna: dnaProfile,
+        avoidNotes,
+        openrouterModel,
+      });
       const parsed = parseJSON(ai.text);
       setLastUsage(ai.usage);
       if (!parsed) throw new Error("Couldn't parse the response. Please try again.");
@@ -1634,10 +1525,12 @@ export default function CoupleContentGeneratorPage() {
     };
     const instruction = customInstruction || guides[action];
     try {
-      const ai = await callAPI([{
-        role: "user",
-        content: `Current concept:\n${JSON.stringify(result, null, 2)}\n\nREFINEMENT: ${instruction}\n\nReturn improved concept as valid JSON only, same structure, no other text.`,
-      }], provider, { maxTokens: 3000, temperature: 0.78 });
+      const ai = await callAPI("refine", {
+        originalResult: JSON.stringify(result, null, 2),
+        feedback: instruction,
+        dna: dnaProfile,
+        openrouterModel,
+      });
       const parsed = parseJSON(ai.text);
       setLastUsage(ai.usage);
       if (parsed) { setResult(parsed); setSavedThisResult(false); }
@@ -1652,15 +1545,11 @@ export default function CoupleContentGeneratorPage() {
     try {
       const vibeOptions = VIBES.filter(v => v.id !== "surprise-me")
         .map(v => `- ${v.id}: ${v.label} — ${v.desc}`).join("\n");
-      const prompt = `A couple wants to make short comedy content about this situation: "${situation.trim()}"
-
-Pick the single best-fitting vibe from this list for this specific situation:
-${vibeOptions}
-
-Return ONLY a JSON object, no markdown, no preamble.
-{ "vibeId": "one of the ids above", "reason": "one honest sentence on why this fits" }`;
-      const ai = await callAPI([{ role: "user", content: prompt }], provider, { maxTokens: 220, temperature: 0.2 });
-      const parsed = parseJSON(ai.text);
+      const ai = await callAPI("vibe", {
+        situation: situation.trim(),
+        vibes: vibeOptions,
+      });
+      const parsed = ai.data;
       const match = parsed?.vibeId && VIBES.find(v => v.id === parsed.vibeId);
       if (match) {
         setVibe(match.id);
@@ -1685,16 +1574,13 @@ Return ONLY a JSON object, no markdown, no preamble.
     setToneNoteSuggestion(null);
     try {
       const formatObj = FORMATS.find(f => f.id === format);
-      const prompt = `A couple comedy content creator is about to make a ${formatObj?.label || "couple comedy"} (${formatObj?.desc || ""}) about this situation: "${situation.trim()}"
-
-${creativeDna.trim() ? `Their current Audience & Tone note (persists across sessions — describes how this audience should be talked to): "${creativeDna.trim()}"` : "They haven't set an Audience & Tone note yet."}
-
-Suggest a short, concrete Audience & Tone note for how THIS audience should be talked to — style of voice, not the joke itself. e.g. "Very dry. Minimal dialogue. Feels like real couples, not actors." Keep it under 20 words.
-
-Return ONLY a JSON object, no markdown, no preamble.
-{ "tone": "short concrete audience & tone note", "reason": "one honest sentence on why this fits" }`;
-      const ai = await callAPI([{ role: "user", content: prompt }], provider, { maxTokens: 220, temperature: 0.3 });
-      const parsed = parseJSON(ai.text);
+      const ai = await callAPI("tone", {
+        situation: situation.trim(),
+        formatLabel: formatObj?.label,
+        formatDesc: formatObj?.desc,
+        creativeDna,
+      });
+      const parsed = ai.data;
       if (parsed?.tone) setToneNoteSuggestion({ tone: parsed.tone, reason: parsed.reason || null });
     } catch {
       // fail silently — same pattern as suggestVibe
@@ -1712,26 +1598,21 @@ Return ONLY a JSON object, no markdown, no preamble.
   };
 
   // "Get Ideas" — browsable list of premise suggestions, mirrors Solo's
-  // generateIdeas()/selectIdea(). Built client-side like suggestVibe rather
-  // than through a new server action, keeping the same pattern Couple
-  // already uses for AI suggestions.
+  // generateIdeas()/selectIdea(). Sends the structured "ideas" action to
+  // /api/couple, which owns prompt construction via buildCoupleIdeaPrompt.
   const generateIdeas = async () => {
     setIdeasLoading(true);
     setShowIdeas(true);
     setIdeas(null);
     try {
       const formatObj = FORMATS.find(f => f.id === format);
-      const dnaBlock = dnaProfile ? `\n\nThis couple's learned Comedy DNA (use it to inform tone, don't just describe it):\n${summarizeDNAForPrompt(dnaProfile, formatObj?.label || "")}` : "";
-      const avoidBlock = avoidNotes.length > 0 ? `\n\nAVOID — do not suggest anything resembling these:\n${avoidNotes.map(n => `- ${n.note}`).join("\n")}` : "";
-      const prompt = `Suggest 5 distinct, highly relatable couple comedy situation ideas for a ${formatObj?.label || "couple comedy"} (${formatObj?.desc || ""}).${dnaBlock}${avoidBlock}
-
-Each idea must be something real couples actually experience — specific and concrete, not generic sitcom conflict. Make the 5 ideas meaningfully different from each other.
-
-Return ONLY a JSON array, no markdown, no preamble. Each item:
-{ "premise": "a specific relatable couple situation, 1-2 sentences", "vibe": "short natural vibe/tone description", "why": "one sentence on why this works for this couple's audience" }`;
-      const ai = await callAPI([{ role: "user", content: prompt }], provider, { maxTokens: 900, temperature: 0.85 });
-      const parsed = parseJSON(ai.text);
-      setIdeas(Array.isArray(parsed) ? parsed : []);
+      const ai = await callAPI("ideas", {
+        formatLabel: formatObj?.label,
+        formatDesc: formatObj?.desc,
+        dna: dnaProfile,
+        avoidNotes,
+      });
+      setIdeas(Array.isArray(ai.data?.ideas) ? ai.data.ideas : []);
     } catch {
       setIdeas([]);
     } finally {
@@ -1765,12 +1646,7 @@ Return ONLY a JSON array, no markdown, no preamble. Each item:
     if (!script || avoidSubmitting) return;
     setAvoidSubmitting(true);
     try {
-      const distillRes = await fetch("/api/couple/avoid-note", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ script, reason, provider }),
-      });
-      const distill = await distillRes.json().catch(() => ({}));
-      if (!distillRes.ok) throw new Error(distill?.error || "Failed to learn from this result.");
+      const distill = (await callAPI("distillAvoidNote", { script, reason })).data;
       const saveRes = await fetch("/api/couple/avoid-notes", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ note: distill.note, sourceScript: script }),
@@ -1865,7 +1741,7 @@ Return ONLY a JSON array, no markdown, no preamble. Each item:
             (Generator / Comedy DNA / Saved) stay in their own row below,
             unaffected. */}
         <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "14px" }}>
-          <ModeSwitcher active="couple" /><ProviderSwitcher app="couple" provider={provider} onChange={setProvider} />
+          <ModeSwitcher active="couple" />
         </div>
         <div style={{ paddingBottom: "20px" }}>
           <div style={{ fontSize: "22px", fontWeight: "800", letterSpacing: "-0.5px", color: "#fff" }}>💑 Couple Content Generator</div>
@@ -1895,7 +1771,7 @@ Return ONLY a JSON array, no markdown, no preamble. Each item:
 
       {/* DNA Trainer View */}
       {view === "dna" && (
-        <DnaTrainer dnaProfile={dnaProfile} onProfileUpdate={(p) => setDnaProfile(p)} provider={provider} avoidNotes={avoidNotes} deleteAvoidNote={deleteAvoidNote} />
+        <DnaTrainer dnaProfile={dnaProfile} onProfileUpdate={(p) => setDnaProfile(p)} avoidNotes={avoidNotes} deleteAvoidNote={deleteAvoidNote} />
       )}
 
       {/* Generator View */}
@@ -2128,6 +2004,10 @@ Return ONLY a JSON array, no markdown, no preamble. Each item:
                   </div>
                 </div>
               )}
+            </div>
+
+            <div style={{ marginBottom: "12px" }}>
+              <ModelSelect app="couple" onChange={setOpenrouterModel} />
             </div>
 
             {/* Action buttons */}

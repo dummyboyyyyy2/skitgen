@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { FORMATS } from "@/lib/prompts";
 import ModeSwitcher from "@/lib/ModeSwitcher";
-import ProviderSwitcher from "@/lib/ProviderSwitcher";
+import ModelSelect from "@/lib/ModelSelect";
 
 // Cap on how many samples can feed the Comedy DNA at once. Past this, more
 // samples tend to average out distinctive quirks instead of sharpening them —
@@ -19,11 +19,11 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function formatAIError(data, status) {
   if (data?.code === "RATE_LIMIT_EXHAUSTED") {
-    const provider = data.provider === "anthropic" ? "Anthropic" : "Gemini";
+    const provider = data.provider === "anthropic" ? "Anthropic" : data.provider === "openrouter" ? "OpenRouter" : "Gemini";
     const wait = Number.isFinite(Number(data.retryAfter)) && Number(data.retryAfter) > 0
       ? ` The provider asked us to wait about ${Math.ceil(Number(data.retryAfter))} seconds.`
       : "";
-    return `${provider} rate limit reached — this API is temporarily maxed out for this request.${wait} Please wait a little and try again, or switch to the other AI provider.`;
+    return `${provider} rate limit reached — this API is temporarily maxed out for this request.${wait} Please wait a little and try again.`;
   }
   return data?.error || `Request failed (${status})`;
 }
@@ -379,8 +379,7 @@ function SavedPanel({ scripts, onOpen, onCopy, onDelete, onClose }) {
 ============================================================ */
 
 export default function SkitGen() {
-  const [provider, setProvider] = useState("gemini");
-  const [view, setView] = useState("generate");
+    const [view, setView] = useState("generate");
   const [bootLoading, setBootLoading] = useState(true);
   const [bootError, setBootError] = useState(null);
 
@@ -390,6 +389,10 @@ export default function SkitGen() {
   const [result, setResult] = useState(null);
   const [lastUsage, setLastUsage] = useState(null);
   const [loading, setLoading] = useState(false);
+  // Mirrored up from <ModelSelect> (lib/ModelSelect.js), which owns fetching
+  // the live OpenRouter catalog and persisting the choice — this is just the
+  // current value so generate() can thread it into script/refine calls.
+  const [openrouterModel, setOpenrouterModel] = useState(null);
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
   const [lastModeUsed, setLastModeUsed] = useState(null);
@@ -431,17 +434,6 @@ export default function SkitGen() {
   const [expandedSampleId, setExpandedSampleId] = useState(null);
 
   // Provider preference is shared through Neon and persists across devices.
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/settings")
-      .then(async (res) => {
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.error || "Failed to load provider setting.");
-        if (!cancelled && (data?.solo === "gemini" || data?.solo === "anthropic")) setProvider(data.solo);
-      })
-      .catch((err) => console.warn("Provider setting load failed:", err));
-    return () => { cancelled = true; };
-  }, []);
 
   // Initial load from Neon
   useEffect(() => {
@@ -520,7 +512,7 @@ export default function SkitGen() {
   const analyzeSample = async (sample) => {
     try {
       const formatInfo = sample.format ? FORMATS.find((f) => f.id === sample.format) : null;
-      const { analysis } = await apiGenerate("analyzeSample", { content: sample.content, title: sample.title, formatLabel: formatInfo?.label || null, formatDesc: formatInfo?.desc || null }, null, provider);
+      const { analysis } = await apiGenerate("analyzeSample", { content: sample.content, title: sample.title, formatLabel: formatInfo?.label || null, formatDesc: formatInfo?.desc || null });
       const updated = await apiUpdateSample(sample.id, { analysis });
       setSamples((prev) => prev.map((s) => (s.id === sample.id ? updated : s)));
       return true;
@@ -585,12 +577,12 @@ export default function SkitGen() {
 
       if (forceFull || !comedyDNA) {
         setTrainingStatus(`Synthesizing Comedy DNA from ${readySamples.length} analyzed sample${readySamples.length === 1 ? "" : "s"}...`);
-        const res = await apiGenerate("synthesizeDNA", { analyses: readySamples.map((s) => { const fi = s.format ? FORMATS.find((f) => f.id === s.format) : null; return { ...s, formatLabel: fi?.label || null, formatDesc: fi?.desc || null }; }), baseProfileSummary }, null, provider);
+        const res = await apiGenerate("synthesizeDNA", { analyses: readySamples.map((s) => { const fi = s.format ? FORMATS.find((f) => f.id === s.format) : null; return { ...s, formatLabel: fi?.label || null, formatDesc: fi?.desc || null }; }), baseProfileSummary });
         dna = res.dna;
         coveredIds = readySamples.map((s) => s.id);
       } else {
         setTrainingStatus(`Updating Comedy DNA with ${newSamples.length} new sample${newSamples.length === 1 ? "" : "s"} (not resending the whole corpus)...`);
-        const res = await apiGenerate("updateDNA", { existingDNA: comedyDNA, newAnalyses: newSamples.map((s) => { const fi = s.format ? FORMATS.find((f) => f.id === s.format) : null; return { ...s, formatLabel: fi?.label || null, formatDesc: fi?.desc || null }; }) }, null, provider);
+        const res = await apiGenerate("updateDNA", { existingDNA: comedyDNA, newAnalyses: newSamples.map((s) => { const fi = s.format ? FORMATS.find((f) => f.id === s.format) : null; return { ...s, formatLabel: fi?.label || null, formatDesc: fi?.desc || null }; }) });
         dna = res.dna;
         coveredIds = Array.from(new Set([...includedSampleIds, ...newSamples.map((s) => s.id)]));
       }
@@ -685,7 +677,7 @@ export default function SkitGen() {
     if (!script || avoidSubmitting) return;
     setAvoidSubmitting(true);
     try {
-      const { note } = await apiGenerate("distillAvoidNote", { script, reason }, null, provider);
+      const { note } = await apiGenerate("distillAvoidNote", { script, reason });
       if (!note?.trim()) throw new Error("Couldn't create an Avoid note from this result.");
       const res = await fetch("/api/avoid-notes", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -716,7 +708,7 @@ export default function SkitGen() {
     setShowIdeas(true);
     setIdeas(null);
     try {
-      const { ideas: got } = await apiGenerate("ideas", { formatLabel: formatInfo.label, formatDesc: formatInfo.desc, dna: comedyDNA, avoidNotes }, null, provider);
+      const { ideas: got } = await apiGenerate("ideas", { formatLabel: formatInfo.label, formatDesc: formatInfo.desc, dna: comedyDNA, avoidNotes });
       setIdeas(got);
     } catch {
       setIdeas([]);
@@ -731,7 +723,7 @@ export default function SkitGen() {
     setSuggestedTone(null);
     setToneReason(null);
     try {
-      const { tone, reason } = await apiGenerate("tone", { topic: topicText, formatLabel: formatInfo.label, formatDesc: formatInfo.desc, dna: comedyDNA }, null, provider);
+      const { tone, reason } = await apiGenerate("tone", { topic: topicText, formatLabel: formatInfo.label, formatDesc: formatInfo.desc, dna: comedyDNA });
       setSuggestedTone(tone);
       setToneReason(reason);
     } catch {
@@ -766,7 +758,8 @@ export default function SkitGen() {
           feedback,
           dna: comedyDNA,
           selectedMode: lastModeUsed,
-        }, null, provider);
+          openrouterModel,
+        });
       } else {
         const formatInfo = FORMATS.find((f) => f.id === format);
         const voiceClips = samples
@@ -782,7 +775,8 @@ export default function SkitGen() {
           dna: comedyDNA,
           avoidNotes,
           voiceClips,
-        }, null, provider);
+          openrouterModel,
+        });
 
         const modeFromResult = data.result ? parseResult(data.result).mode : null;
         setLastModeUsed(modeFromResult || null);
@@ -892,7 +886,7 @@ export default function SkitGen() {
             COMEDY DNA / SAVED) stay below, unaffected. Separate app, separate
             DNA, separate everything under the hood — this is just navigation. */}
         <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "14px" }}>
-          <ModeSwitcher active="solo" /><ProviderSwitcher app="solo" provider={provider} onChange={setProvider} />
+          <ModeSwitcher active="solo" />
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", paddingBottom: "20px", gap: "12px", flexWrap: "wrap" }}>
           <div>
@@ -1044,6 +1038,10 @@ export default function SkitGen() {
                 placeholder="Optional — characters, setting, constraints, references..."
                 style={S.input}
               />
+            </div>
+
+            <div style={{ marginBottom: "14px" }}>
+              <ModelSelect app="solo" onChange={setOpenrouterModel} />
             </div>
 
             <PrimaryButton

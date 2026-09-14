@@ -23,14 +23,25 @@ export const runtime = "nodejs";
 // further) if you see timeouts on Rant/Skit.
 export const maxDuration = 90;
 
+// SHARED-ARCHITECTURE RULE: Solo and Couple should keep equivalent pipeline mechanics.
+// Do not copy Solo creative prompts/DNA semantics into Couple; only port engineering improvements.
 export async function POST(req) {
   try {
     const body = await req.json();
-    const { action, provider: rawProvider } = body;
-    // Caller (app/page.js) passes along whatever GET /api/settings returned for
-    // "solo"; fall back to Solo's own default if omitted or invalid, so this
-    // route still works standalone (e.g. direct API calls, tests).
-    const provider = isValidProvider(rawProvider) ? rawProvider : DEFAULT_PROVIDER.solo;
+    const { action, provider: rawProvider, openrouterModel } = body;
+    // Only meaningful for the two OpenRouter-routed actions below; harmless
+    // to have present for other actions since lib/ai.js only reads `model`
+    // in its openrouter branch.
+    const modelOption = openrouterModel ? { model: openrouterModel } : {};
+
+    // Solo routing is intentionally task-based:
+    // - Gemini handles lightweight/structured work around the script.
+    // - OpenRouter handles the actual creative writing and refinement.
+    // The client no longer chooses the provider for Solo, so provider choice
+    // can change without changing the UI or user workflow.
+    const provider = action === "script" || action === "refine"
+      ? "openrouter"
+      : (isValidProvider(rawProvider) ? rawProvider : DEFAULT_PROVIDER.solo);
 
     switch (action) {
       case "ideas": {
@@ -61,7 +72,7 @@ export async function POST(req) {
           "Skit": 3000,
           "Rant": 3200,
         }[formatLabel] || 2400;
-        const draftAI = await callAI({ provider, system: COMEDY_PROFILE, prompt, maxTokens: scriptTokenBudget, options: { temperature: 0.9 } });
+        const draftAI = await callAI({ provider, system: COMEDY_PROFILE, prompt, maxTokens: scriptTokenBudget, options: { temperature: 0.9, ...modelOption } });
         const text = draftAI.text;
         // The verification pass repairs, it doesn't extend — a fixed-up script
         // is never meaningfully longer than the draft it started from. Capping
@@ -74,7 +85,7 @@ export async function POST(req) {
           system: COMEDY_VERIFIER,
           prompt: buildScriptVerificationPrompt(text, avoidNotes, prompt),
           maxTokens: verifyTokenBudget,
-          options: { temperature: 0.3, retries: 2 },
+          options: { temperature: 0.3, retries: 2, ...modelOption },
         });
         return Response.json({
           result: verifiedAI.text || text,
@@ -97,7 +108,7 @@ export async function POST(req) {
       case "refine": {
         const { originalScript, feedback, dna, selectedMode } = body;
         const prompt = buildRefinePrompt(originalScript, feedback, dna, selectedMode);
-        const ai = await callAI({ provider, system: COMEDY_PROFILE, prompt, maxTokens: 2600, options: { temperature: 0.78 } });
+        const ai = await callAI({ provider, system: COMEDY_PROFILE, prompt, maxTokens: 2600, options: { temperature: 0.78, ...modelOption } });
         return Response.json({ result: ai.text, usage: ai.usage });
       }
 

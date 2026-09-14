@@ -125,3 +125,15 @@ CREATE TABLE IF NOT EXISTS couple_avoid_notes (
   source_script TEXT DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ─── Shared: per-app OpenRouter model selection ─────────────────────────────
+-- Which OpenRouter model each generator's script/refine calls currently use,
+-- chosen from the live dropdown fed by GET /api/models (OpenRouter's own
+-- catalog — never hardcoded). One row per app. If no row exists yet, GET
+-- /api/model-settings falls back to OPENROUTER_MODEL or lib/openrouter.js's
+-- hardcoded default.
+CREATE TABLE IF NOT EXISTS model_settings (
+  app TEXT PRIMARY KEY CHECK (app IN ('solo', 'couple')),
+  model TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
