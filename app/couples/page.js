@@ -1775,7 +1775,7 @@ export default function CoupleContentGeneratorPage() {
           <div className="left-sticky">
 
             {/* Situation */}
-            <div style={{ marginBottom: "24px" }}>
+            <div style={{ marginBottom: "32px" }}>
               <span style={sLabel}>What's happening?</span>
               <textarea
                 value={situation}
@@ -1802,7 +1802,7 @@ export default function CoupleContentGeneratorPage() {
             </div>
 
             {showIdeas && (
-              <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: "10px", padding: "14px 15px", marginBottom: "24px" }}>
+              <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: "10px", padding: "14px 15px", marginBottom: "32px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
                   <div style={{ fontSize: "11px", letterSpacing: "1.2px", color: C.muted, fontWeight: 700 }}>
                     IDEAS — <span style={{ color: C.muted, fontWeight: 400 }}>{FORMATS.find(f => f.id === format)?.label}</span>
@@ -1833,7 +1833,7 @@ export default function CoupleContentGeneratorPage() {
             )}
 
             {/* Vibe */}
-            <div style={{ marginBottom: "24px" }}>
+            <div style={{ marginBottom: "32px" }}>
               <span style={sLabel}>Humor / Vibe <span style={{ fontWeight: 400, fontSize: "9px" }}>— optional</span></span>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "8px" }}>
                 {VIBES.map(v => (
@@ -1863,7 +1863,7 @@ export default function CoupleContentGeneratorPage() {
             </div>
 
             {/* Format */}
-            <div style={{ marginBottom: "24px" }}>
+            <div style={{ marginBottom: "32px" }}>
               <span style={sLabel}>Format</span>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
                 {FORMATS.map(f => {
@@ -1892,7 +1892,7 @@ export default function CoupleContentGeneratorPage() {
             </div>
 
             {/* Advanced */}
-            <div style={{ marginBottom: "24px" }}>
+            <div style={{ marginBottom: "32px" }}>
               <button onClick={() => setAdvOpen(!advOpen)} style={{
                 width: "100%", padding: 0, border: "none", background: "none",
                 display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer",
@@ -1985,7 +1985,7 @@ export default function CoupleContentGeneratorPage() {
               )}
             </div>
 
-            <div style={{ marginBottom: "12px" }}>
+            <div style={{ marginBottom: "14px" }}>
               <ModelSelect app="couple" onChange={setOpenrouterModel} />
             </div>
 
@@ -2005,12 +2005,6 @@ export default function CoupleContentGeneratorPage() {
             >
               {loading ? "✨ Generating..." : "✨ Generate"}
             </button>
-
-            {!canGenerate && (
-              <div style={{ textAlign: "center", fontSize: "12px", color: C.muted, marginTop: "8px" }}>
-                Type a situation or pick a vibe to generate
-              </div>
-            )}
           </div>
 
           {/* ── RIGHT OUTPUT ── */}
@@ -2039,16 +2033,6 @@ export default function CoupleContentGeneratorPage() {
               </div>
             )}
 
-            {!result && !loading && !err && (
-              <div style={{ background: C.white, borderRadius: "10px", padding: "60px 24px", textAlign: "center", border: "1px solid var(--border-soft)" }}>
-                <div style={{ fontSize: "40px", marginBottom: "14px" }}>💑</div>
-                <div style={{ fontSize: "15px", fontWeight: 700, color: C.dark, marginBottom: "8px" }}>Your concept will appear here</div>
-                <div style={{ fontSize: "13px", color: C.muted, lineHeight: 1.7 }}>
-                  Type a situation — or just hit Surprise Me.<br />
-                  The rest is optional.
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </div>}
