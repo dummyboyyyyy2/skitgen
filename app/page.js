@@ -927,34 +927,6 @@ export default function SkitGen() {
         {view === "generate" ? (
           <>
             <div style={S.section}>
-              <span style={S.sectionLabel}>FORMAT</span>
-              <div className="format-grid">
-                {FORMATS.map((f) => {
-                  const selected = format === f.id;
-                  return (
-                    <button
-                      key={f.id}
-                      onClick={() => { setFormat(f.id); setSuggestedTone(null); setToneReason(null); }}
-                      className={`format-card ${selected ? "is-selected" : ""}`}
-                      style={{
-                        padding: "14px 8px", borderRadius: "8px",
-                        border: selected ? `1px solid ${C.accent}` : `1px solid ${C.borderSoft}`,
-                        background: selected ? "rgba(240,180,41,0.08)" : C.surface1,
-                        color: selected ? "#fff" : C.textSecondary,
-                        cursor: "pointer", fontFamily: "inherit", textAlign: "center",
-                        lineHeight: "1.4", minHeight: "76px",
-                      }}
-                    >
-                      <div style={{ fontSize: "18px", marginBottom: "5px" }}>{f.icon}</div>
-                      <div style={{ fontWeight: "700", fontSize: "11px", color: selected ? C.accent : C.textSecondary }}>{f.label}</div>
-                      <div style={{ fontSize: "10px", opacity: 0.65, marginTop: "3px" }}>{f.desc}</div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div style={S.section}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
                 <span style={{ ...S.sectionLabel, marginBottom: 0 }}>WHAT'S IT ABOUT</span>
               </div>
@@ -997,6 +969,34 @@ export default function SkitGen() {
                 )}
               </div>
             )}
+
+            <div style={S.section}>
+              <span style={S.sectionLabel}>FORMAT</span>
+              <div className="format-grid">
+                {FORMATS.map((f) => {
+                  const selected = format === f.id;
+                  return (
+                    <button
+                      key={f.id}
+                      onClick={() => { setFormat(f.id); setSuggestedTone(null); setToneReason(null); }}
+                      className={`format-card ${selected ? "is-selected" : ""}`}
+                      style={{
+                        padding: "14px 8px", borderRadius: "8px",
+                        border: selected ? `1px solid ${C.accent}` : `1px solid ${C.borderSoft}`,
+                        background: selected ? "rgba(240,180,41,0.08)" : C.surface1,
+                        color: selected ? "#fff" : C.textSecondary,
+                        cursor: "pointer", fontFamily: "inherit", textAlign: "center",
+                        lineHeight: "1.4", minHeight: "76px",
+                      }}
+                    >
+                      <div style={{ fontSize: "18px", marginBottom: "5px" }}>{f.icon}</div>
+                      <div style={{ fontWeight: "700", fontSize: "11px", color: selected ? C.accent : C.textSecondary }}>{f.label}</div>
+                      <div style={{ fontSize: "10px", opacity: 0.65, marginTop: "3px" }}>{f.desc}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
 
             <div style={S.section}>
               <span style={S.sectionLabel}>VIBE</span>

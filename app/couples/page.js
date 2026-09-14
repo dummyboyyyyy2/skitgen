@@ -1629,19 +1629,6 @@ export default function CoupleContentGeneratorPage() {
     setVibeReason(idea.why || idea.vibe || null);
   };
 
-  const surprise = () => {
-    setSituation("");
-    setVibe(pick(VIBES.filter(v => v.id !== "surprise-me")).id);
-    setVibeReason(null);
-    setFormat(pick(FORMATS).id);
-    setLocation(pick(LOCATIONS.filter(l => l.id !== "ai")).id);
-    setDynamic(pick(DYNAMICS.filter(d => d.id !== "ai")).id);
-    setIntensity(pick(INTENSITIES).id);
-    setFlavor(pick(FLAVORS).id);
-    setBlueprint(pick(BLUEPRINTS.filter(b => b.id !== "ai")).id);
-    setPersonalities([]);
-  };
-
   const submitAvoidNote = async (script, reason = "") => {
     if (!script || avoidSubmitting) return;
     setAvoidSubmitting(true);
@@ -1705,14 +1692,6 @@ export default function CoupleContentGeneratorPage() {
     );
   };
 
-  const resetAll = () => {
-    // Note: creativeDna (Audience & Tone) is intentionally NOT cleared here —
-    // it's a standing tone anchor for this audience, not a per-generation input.
-    setSituation(""); setVibe(null); setVibeReason(null); setFormat("acted-skit");
-    setLocation("ai"); setPersonalities([]); setDynamic("ai");
-    setIntensity(null); setFlavor(null); setBlueprint("ai");
-    setResult(null); setErr(null); setSavedThisResult(false);
-  };
 
   return (
     <>
@@ -2026,15 +2005,6 @@ export default function CoupleContentGeneratorPage() {
             >
               {loading ? "✨ Generating..." : "✨ Generate"}
             </button>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-              <button onClick={surprise} style={{ padding: "11px", borderRadius: "8px", border: `1.5px solid ${C.purple}`, background: `${C.purple}10`, color: C.purple, fontSize: "13px", fontWeight: 700, cursor: "pointer" }}>
-                🎲 Surprise Me
-              </button>
-              <button onClick={resetAll} style={{ padding: "11px", borderRadius: "8px", border: `1.5px solid ${C.border}`, background: C.white, color: C.muted, fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
-                Reset
-              </button>
-            </div>
 
             {!canGenerate && (
               <div style={{ textAlign: "center", fontSize: "12px", color: C.muted, marginTop: "8px" }}>

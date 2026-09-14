@@ -51,11 +51,13 @@ export async function POST(req) {
     switch (action) {
       case "ideas": {
         const { formatLabel, formatDesc, dna, avoidNotes = [] } = body;
+        // Mirrors Solo's fix: ideas used to run on the lite model tier, a
+        // meaningfully weaker model than the one that writes actual scripts.
         const ai = await callAI({
           provider,
           prompt: buildCoupleIdeaPrompt(formatLabel, formatDesc, dna, avoidNotes),
           maxTokens: 900,
-          options: { lite: true, temperature: 0.85 },
+          options: { temperature: 0.85 },
         });
         const parsed = safeJSONParse(ai.text, []);
         return Response.json({ ideas: Array.isArray(parsed) ? parsed : [], usage: ai.usage });
