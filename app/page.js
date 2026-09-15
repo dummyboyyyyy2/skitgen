@@ -393,6 +393,10 @@ export default function SkitGen() {
   // the live OpenRouter catalog and persisting the choice — this is just the
   // current value so generate() can thread it into script/refine calls.
   const [openrouterModel, setOpenrouterModel] = useState(null);
+  // "openrouter" | "gemini" — also mirrored up from <ModelSelect>. When
+  // "gemini", script/refine bypass OpenRouter entirely and call this app's
+  // own Gemini API key directly instead.
+  const [genSource, setGenSource] = useState("openrouter");
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
   const [lastModeUsed, setLastModeUsed] = useState(null);
@@ -759,6 +763,7 @@ export default function SkitGen() {
           dna: comedyDNA,
           selectedMode: lastModeUsed,
           openrouterModel,
+          useGemini: genSource === "gemini",
         });
       } else {
         const formatInfo = FORMATS.find((f) => f.id === format);
@@ -776,6 +781,7 @@ export default function SkitGen() {
           avoidNotes,
           voiceClips,
           openrouterModel,
+          useGemini: genSource === "gemini",
         });
 
         const modeFromResult = data.result ? parseResult(data.result).mode : null;
@@ -1041,7 +1047,7 @@ export default function SkitGen() {
             </div>
 
             <div style={{ marginBottom: "14px" }}>
-              <ModelSelect app="solo" onChange={setOpenrouterModel} />
+              <ModelSelect app="solo" onChange={setOpenrouterModel} onSourceChange={setGenSource} />
             </div>
 
             <PrimaryButton

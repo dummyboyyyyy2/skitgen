@@ -61,6 +61,15 @@ const CODE_SPECIALIST_NAME = /\bcode\b/i;
 // suffix). The plain-text siblings in the same family stay eligible.
 const VISION_SPECIALIST_SUFFIX = /(^|[\s:-])vl\b/i;
 
+// Gemini specifically (not Gemma — a different, genuinely distinct model
+// family) is excluded here on purpose: this app now has a separate
+// "Gemini (direct)" generation-source toggle that calls Gemini through this
+// app's own API key instead of OpenRouter, which avoids OpenRouter's
+// shared-across-everyone free-tier rate limit entirely. Leaving Gemini in
+// this dropdown too would just be a second, worse way to reach the same
+// model (still subject to OpenRouter's limit) sitting next to the better one.
+const GEMINI_BRAND_NAME = /\bgemini\b/i;
+
 function isScriptSuitable(m) {
   const outputModalities = m.architecture?.output_modalities || [];
   if (outputModalities.length && !outputModalities.includes("text")) return false;
@@ -70,6 +79,7 @@ function isScriptSuitable(m) {
   if (KNOWN_NON_FIT_PREFIXES.some((p) => m.id.startsWith(p))) return false;
   if (CODE_SPECIALIST_NAME.test(m.name || "")) return false;
   if (VISION_SPECIALIST_SUFFIX.test(m.name || "") || VISION_SPECIALIST_SUFFIX.test(m.id || "")) return false;
+  if (GEMINI_BRAND_NAME.test(m.name || "") || GEMINI_BRAND_NAME.test(m.id || "")) return false;
 
   const haystack = `${m.id} ${m.name || ""} ${m.description || ""}`.toLowerCase();
   return !EXCLUDE_PATTERNS.some(([pattern]) => pattern.test(haystack));

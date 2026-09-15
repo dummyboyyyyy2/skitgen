@@ -135,5 +135,8 @@ CREATE TABLE IF NOT EXISTS couple_avoid_notes (
 CREATE TABLE IF NOT EXISTS model_settings (
   app TEXT PRIMARY KEY CHECK (app IN ('solo', 'couple')),
   model TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'openrouter' CHECK (source IN ('openrouter', 'gemini')),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Migration for existing databases created before the `source` column existed:
+-- ALTER TABLE model_settings ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'openrouter' CHECK (source IN ('openrouter', 'gemini'));

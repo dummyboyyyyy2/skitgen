@@ -22,8 +22,8 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 90;
 
-const providerFor = (action) =>
-  ["script", "refine"].includes(action) ? "openrouter" : "gemini";
+const providerFor = (action, useGemini) =>
+  ["script", "refine"].includes(action) ? (useGemini ? "gemini" : "openrouter") : "gemini";
 
 const providerError = (err) => {
   const message = err?.message || "Unexpected API error.";
@@ -42,11 +42,13 @@ export async function POST(req) {
   try {
     const body = await req.json();
     const action = body?.action;
-    const provider = providerFor(action);
+    const useGemini = !!body?.useGemini;
+    const provider = providerFor(action, useGemini);
     // Only meaningful for the two OpenRouter-routed actions below; harmless
     // to have present for other actions since lib/ai.js only reads `model`
-    // in its openrouter branch.
-    const modelOption = body?.openrouterModel ? { model: body.openrouterModel } : {};
+    // in its openrouter branch. Suppressed when useGemini is set, since
+    // Gemini has no per-call model marketplace the way OpenRouter does.
+    const modelOption = !useGemini && body?.openrouterModel ? { model: body.openrouterModel } : {};
 
     switch (action) {
       case "ideas": {

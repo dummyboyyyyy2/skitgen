@@ -1448,6 +1448,10 @@ export default function CoupleContentGeneratorPage() {
   // the live OpenRouter catalog and persisting the choice — this is just the
   // current value so generate() can thread it into script/refine calls.
   const [openrouterModel, setOpenrouterModel] = useState(null);
+  // "openrouter" | "gemini" — also mirrored up from <ModelSelect>. When
+  // "gemini", script/refine bypass OpenRouter entirely and call this app's
+  // own Gemini API key directly instead.
+  const [genSource, setGenSource] = useState("openrouter");
   const [loadingMsg, setLoadingMsg] = useState("");
   const [result, setResult] = useState(null);
   const [lastUsage, setLastUsage] = useState(null);
@@ -1498,6 +1502,7 @@ export default function CoupleContentGeneratorPage() {
         dna: dnaProfile,
         avoidNotes,
         openrouterModel,
+        useGemini: genSource === "gemini",
       });
       const parsed = parseJSON(ai.text);
       setLastUsage(ai.usage);
@@ -1530,6 +1535,7 @@ export default function CoupleContentGeneratorPage() {
         feedback: instruction,
         dna: dnaProfile,
         openrouterModel,
+        useGemini: genSource === "gemini",
       });
       const parsed = parseJSON(ai.text);
       setLastUsage(ai.usage);
@@ -1986,7 +1992,7 @@ export default function CoupleContentGeneratorPage() {
             </div>
 
             <div style={{ marginBottom: "14px" }}>
-              <ModelSelect app="couple" onChange={setOpenrouterModel} />
+              <ModelSelect app="couple" onChange={setOpenrouterModel} onSourceChange={setGenSource} />
             </div>
 
             {/* Action buttons */}

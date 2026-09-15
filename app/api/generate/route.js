@@ -28,19 +28,24 @@ export const maxDuration = 90;
 export async function POST(req) {
   try {
     const body = await req.json();
-    const { action, provider: rawProvider, openrouterModel } = body;
+    const { action, provider: rawProvider, openrouterModel, useGemini } = body;
     // Only meaningful for the two OpenRouter-routed actions below; harmless
     // to have present for other actions since lib/ai.js only reads `model`
-    // in its openrouter branch.
-    const modelOption = openrouterModel ? { model: openrouterModel } : {};
+    // in its openrouter branch. Suppressed when useGemini is set, since
+    // Gemini has no per-call model marketplace the way OpenRouter does.
+    const modelOption = !useGemini && openrouterModel ? { model: openrouterModel } : {};
 
     // Solo routing is intentionally task-based:
     // - Gemini handles lightweight/structured work around the script.
-    // - OpenRouter handles the actual creative writing and refinement.
-    // The client no longer chooses the provider for Solo, so provider choice
-    // can change without changing the UI or user workflow.
+    // - OpenRouter handles the actual creative writing and refinement —
+    //   UNLESS the person has flipped the "Gemini (direct)" generation
+    //   source toggle, in which case script/refine go straight to this
+    //   app's own Gemini API key instead, avoiding OpenRouter's rate limit
+    //   (shared across every app using its free-tier models) entirely.
+    // The client no longer chooses the provider for other actions, so
+    // provider choice for those can change without changing the UI.
     const provider = action === "script" || action === "refine"
-      ? "openrouter"
+      ? (useGemini ? "gemini" : "openrouter")
       : (isValidProvider(rawProvider) ? rawProvider : DEFAULT_PROVIDER.solo);
 
     switch (action) {
