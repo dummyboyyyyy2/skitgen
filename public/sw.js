@@ -3,7 +3,11 @@
 // a basic offline fallback for the app shell — NOT to cache API/DB
 // responses, since samples/DNA/scripts must always come from Neon fresh.
 
-const SHELL_CACHE = "skitgen-shell-v1";
+// Bump this suffix whenever a deploy should force clients to drop old cached
+// shell/navigation entries (the activate handler below deletes any cache
+// that doesn't match this exact name). Without bumping it, this cache is
+// reused forever across deploys and can accumulate stale entries.
+const SHELL_CACHE = "skitgen-shell-v2";
 const SHELL_URLS = ["/", "/manifest.json", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {
