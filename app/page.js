@@ -186,7 +186,41 @@ const copyToClipboard = (text, onDone) => {
 // of the raw AI response text. Lives at module scope (not just inside the
 // main component) so SavedPanel and the save/open/copy handlers can reuse it
 // on saved skits without re-deriving their own copy of the same regexes.
+// Parses a stored/generated result string into a display object. Two
+// formats can show up here:
+//   1. The current JSON schema (title-less; script/premise/characters/beats/
+//      shot_list/ending/caption/hashtags) — powers the Script/Breakdown/Post
+//      tabs, mirroring Couple's ResultCard.
+//   2. The legacy plaintext format (MODE:/STYLE:/LANGUAGE:/--- SCRIPT ---/
+//      --- LINE TO REMEMBER ---) from scripts saved before this schema
+//      existed. These only ever get a Script tab — see `legacy` below.
 function parseResult(text) {
+  if (typeof text !== "string") return { script: "", legacy: true };
+  const cleaned = text.replace(/```json|```/g, "").trim();
+
+  if (cleaned.startsWith("{")) {
+    try {
+      const obj = JSON.parse(cleaned);
+      return {
+        mode: obj.mode || undefined,
+        style: obj.style || undefined,
+        lang: obj.lang || undefined,
+        script: obj.script || "",
+        premise: obj.premise || "",
+        characters: Array.isArray(obj.characters) ? obj.characters : [],
+        beats: Array.isArray(obj.beats) ? obj.beats : [],
+        shot_list: Array.isArray(obj.shot_list) ? obj.shot_list : [],
+        filming_difficulty: obj.filming_difficulty || "",
+        ending: obj.ending || "",
+        caption: obj.caption || "",
+        hashtags: Array.isArray(obj.hashtags) ? obj.hashtags : [],
+        legacy: false,
+      };
+    } catch {
+      // Not actually valid JSON despite the leading brace — fall through.
+    }
+  }
+
   try {
     const modeMatch = text.match(/MODE:\s*(.+)/);
     const styleMatch = text.match(/STYLE:\s*(.+)/);
@@ -199,9 +233,10 @@ function parseResult(text) {
       lang: langMatch?.[1]?.trim(),
       script: scriptMatch?.[1]?.trim() || text,
       legend: lineMatch?.[1]?.trim(),
+      legacy: true,
     };
   } catch {
-    return { script: text };
+    return { script: text, legacy: true };
   }
 }
 
@@ -334,16 +369,205 @@ function ScriptBody({ text }) {
   );
 }
 
+// Tabbed result view — mirrors Couple's ResultCard tab mechanic
+// (Script / Breakdown / Post, app/couples/page.js) on the UI/architecture
+// level, but wired to Solo's own schema/fields (see parseResult() above and
+// buildScriptPrompt in lib/prompts.js), per AI-CODING-GUIDELINES.md: shared
+// interface, separate creative semantics.
+//
+// Legacy-format saved scripts (parsed.legacy === true) only ever show the
+// Script tab — there's no Breakdown/Post data to show for those.
+function SoloResultTabs({ parsed, usage, copied, onCopy, onSave, saving, saved }) {
+  const [tab, setTab] = useState("script");
+  const hasStructure = !parsed.legacy;
+
+  const postText = `${parsed.caption || ""}\n\n${(parsed.hashtags || []).map((h) => `#${h.replace(/^#/, "")}`).join(" ")}`;
+  const breakdownText = [
+    parsed.premise && `PREMISE\n${parsed.premise}`,
+    parsed.characters?.length && `\nCHARACTERS\n${parsed.characters.map((c) => `${c.role}: ${c.trait}`).join("\n")}`,
+    parsed.beats?.length && `\nBEATS\n${parsed.beats.map((b, i) => `${i + 1}. ${b}`).join("\n")}`,
+    parsed.shot_list?.length && `\nSHOT LIST\n${parsed.shot_list.join("\n")}`,
+    parsed.ending && `\nENDING\n${parsed.ending}`,
+  ].filter(Boolean).join("");
+  const tabText = { script: parsed.script || "", breakdown: breakdownText, post: postText };
+
+  return (
+    <div style={{ ...S.card, padding: 0, overflow: "hidden", marginTop: "4px" }}>
+      <div style={{ padding: "18px 22px 14px", borderBottom: `1px solid ${C.borderSoft}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
+          <span style={{ fontSize: "12px", letterSpacing: "1.5px", color: C.textMuted, fontWeight: 700 }}>YOUR SKIT</span>
+          <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+            {usage && formatTokenUsage(usage) && (
+              <span style={{ fontSize: "10px", color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: "999px", padding: "4px 8px", whiteSpace: "nowrap" }}>
+                {formatTokenUsage(usage)}
+              </span>
+            )}
+            <GhostButton onClick={() => onCopy(tabText[tab])} style={{ color: copied ? C.success : C.textMuted }}>
+              {copied ? "copied ✓" : "copy"}
+            </GhostButton>
+            <button
+              onClick={onSave}
+              disabled={saving || saved}
+              style={{
+                padding: "6px 13px", borderRadius: "8px",
+                border: `1px solid ${saved ? C.success : C.border}`,
+                background: saved ? `${C.success}15` : "transparent",
+                color: saved ? C.success : C.textMuted,
+                fontSize: "12px", fontWeight: 600, cursor: saving || saved ? "default" : "pointer",
+                fontFamily: "inherit", transition: "all 0.15s",
+              }}
+            >
+              {saved ? "✓ saved" : saving ? "saving…" : "save"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {hasStructure && (
+        <div style={{ display: "flex", borderBottom: `1px solid ${C.borderSoft}` }}>
+          {[{ id: "script", label: "Script" }, { id: "breakdown", label: "Breakdown" }, { id: "post", label: "Post" }].map((t) => (
+            <button key={t.id} onClick={() => setTab(t.id)} style={{
+              flex: 1, padding: "11px 0", border: "none", background: "none",
+              borderBottom: tab === t.id ? `2px solid ${C.accent}` : "2px solid transparent",
+              color: tab === t.id ? C.accent : C.textMuted,
+              fontSize: "13px", fontWeight: tab === t.id ? 700 : 500,
+              cursor: "pointer", fontFamily: "inherit", marginBottom: "-1px", transition: "all 0.12s",
+            }}>{t.label}</button>
+          ))}
+        </div>
+      )}
+
+      <div style={{ padding: "20px 22px" }}>
+        {(!hasStructure || tab === "script") && (
+          <ScriptBody text={parsed.script || "No script generated."} />
+        )}
+
+        {hasStructure && tab === "breakdown" && (
+          <div style={{ fontSize: "13px", lineHeight: 1.7, color: "#d8d8d8" }}>
+            {parsed.premise && (
+              <div style={{ marginBottom: "14px" }}>
+                <span style={S.sectionLabel}>Premise</span>
+                <div style={{ fontStyle: "italic", color: C.textSecondary }}>{parsed.premise}</div>
+              </div>
+            )}
+            {parsed.characters?.length > 0 && (
+              <div style={{ marginBottom: "14px" }}>
+                <span style={S.sectionLabel}>Characters</span>
+                {parsed.characters.map((c, i) => (
+                  <div key={i} style={{ display: "flex", gap: "10px", marginBottom: "5px" }}>
+                    <span style={{ fontWeight: 700, color: C.textSecondary, minWidth: "90px" }}>{c.role}</span>
+                    <span style={{ color: C.textMuted }}>{c.trait}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {parsed.beats?.length > 0 && (
+              <div style={{ marginBottom: "14px" }}>
+                <span style={S.sectionLabel}>Beats</span>
+                {parsed.beats.map((b, i) => (
+                  <div key={i} style={{ display: "flex", gap: "10px", marginBottom: "7px" }}>
+                    <span style={{ color: C.accent, fontWeight: 800, minWidth: "18px", fontSize: "12px" }}>{i + 1}</span>
+                    <span>{b}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {parsed.shot_list?.length > 0 && (
+              <div style={{ marginBottom: "14px" }}>
+                <span style={S.sectionLabel}>Shot List</span>
+                {parsed.shot_list.map((s, i) => <div key={i} style={{ marginBottom: "5px" }}>📷 {s}</div>)}
+              </div>
+            )}
+            {parsed.ending && (
+              <div>
+                <span style={S.sectionLabel}>Ending</span>
+                <div style={{ background: "rgba(240,180,41,0.06)", padding: "10px 13px", borderRadius: "10px", fontStyle: "italic" }}>{parsed.ending}</div>
+              </div>
+            )}
+            {!parsed.premise && !parsed.characters?.length && !parsed.beats?.length && !parsed.shot_list?.length && !parsed.ending && (
+              <div style={{ color: C.textFaint }}>No breakdown details for this one.</div>
+            )}
+          </div>
+        )}
+
+        {hasStructure && tab === "post" && (
+          <div>
+            <div style={{ marginBottom: "16px" }}>
+              <span style={S.sectionLabel}>Caption</span>
+              <div style={{ fontSize: "14px", lineHeight: 1.6, color: "#d8d8d8", padding: "12px 14px", background: C.surface1, borderRadius: "10px" }}>
+                {parsed.caption || "—"}
+              </div>
+            </div>
+            <div>
+              <span style={S.sectionLabel}>Hashtags</span>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                {(parsed.hashtags || []).map((h, i) => (
+                  <span key={i} style={{ padding: "4px 10px", borderRadius: "100px", background: C.surface1, color: C.accent, fontSize: "12px", fontWeight: 600 }}>
+                    #{h.replace(/^#/, "")}
+                  </span>
+                ))}
+                {(!parsed.hashtags || !parsed.hashtags.length) && <span style={{ color: C.textFaint, fontSize: "12px" }}>—</span>}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Slide-out list of skits the user has explicitly saved. Mirrors Couple's
 // SavedPanel (app/couples/page.js) — same layout, same Open/Copy/Delete
 // actions — but backed by the `scripts` table via /api/saved.
+//
+// Includes a dimming backdrop (tap to close) so this reads as a modal
+// instead of a drawer awkwardly sharing the screen with the still-live
+// Generate view behind it, plus safe-area padding on the panel itself —
+// header-shell/page-shell handle that elsewhere in the app, but this panel
+// isn't wrapped in either, so on notched/rounded-corner phones its content
+// was sitting flush against the edge.
 function SavedPanel({ scripts, onOpen, onCopy, onDelete, onClose }) {
+  // Delete is destructive and irreversible (hits DELETE /api/saved/[id]
+  // straight away), so it's gated behind a confirm dialog instead of firing
+  // on a single tap — this state just tracks which item id (if any) is
+  // pending confirmation.
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const confirmItem = scripts.find((s) => s.id === confirmDeleteId) || null;
+
   return (
-    <div style={{
-      position: "fixed", top: 0, right: 0, bottom: 0, width: "min(380px, 100vw)",
-      background: C.surface2, borderLeft: `1px solid ${C.border}`,
-      zIndex: 200, display: "flex", flexDirection: "column",
-    }}>
+    <>
+      <div
+        onClick={onClose}
+        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 199 }}
+      />
+      {confirmItem && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+          <div onClick={() => setConfirmDeleteId(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)" }} />
+          <div style={{ position: "relative", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: "12px", padding: "20px", width: "min(320px, 100%)" }}>
+            <div style={{ fontSize: "15px", fontWeight: 800, color: "#fff", marginBottom: "8px" }}>Delete this skit?</div>
+            <div style={{ fontSize: "13px", color: C.textMuted, marginBottom: "18px", lineHeight: 1.5 }}>
+              “{confirmItem.topic || "Untitled"}” will be permanently deleted. This can't be undone.
+            </div>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button onClick={() => setConfirmDeleteId(null)} style={{ flex: 1, padding: "10px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "transparent", color: C.textSecondary, fontSize: "13px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+              <button
+                onClick={() => { onDelete(confirmDeleteId); setConfirmDeleteId(null); }}
+                style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "none", background: C.danger, color: "#fff", fontSize: "13px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      <div style={{
+        position: "fixed", top: 0, right: 0, bottom: 0, width: "min(380px, 100vw)",
+        background: C.surface2, borderLeft: `1px solid ${C.border}`,
+        zIndex: 200, display: "flex", flexDirection: "column",
+        paddingTop: "env(safe-area-inset-top)",
+        paddingRight: "env(safe-area-inset-right)",
+        paddingBottom: "env(safe-area-inset-bottom)",
+      }}>
       <div style={{ padding: "16px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
         <div style={{ fontSize: "15px", fontWeight: 800, color: "#fff" }}>Saved Skits ({scripts.length})</div>
         <button onClick={onClose} style={{ background: "none", border: "none", fontSize: "22px", cursor: "pointer", color: C.textMuted, lineHeight: 1 }}>×</button>
@@ -364,13 +588,14 @@ function SavedPanel({ scripts, onOpen, onCopy, onDelete, onClose }) {
               <div style={{ display: "flex", gap: "8px" }}>
                 <button onClick={() => onOpen(item)} style={{ flex: 1, padding: "8px", borderRadius: "8px", border: "none", background: C.accent, color: "#1a1200", fontSize: "12px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Open</button>
                 <button onClick={() => onCopy(item)} style={{ padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "transparent", color: C.textSecondary, fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}>Copy</button>
-                <button onClick={() => onDelete(item.id)} style={{ padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "transparent", color: C.textMuted, fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}>Delete</button>
+                <button onClick={() => setConfirmDeleteId(item.id)} style={{ padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "transparent", color: C.textMuted, fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}>Delete</button>
               </div>
             </div>
           );
         })}
       </div>
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -756,9 +981,12 @@ export default function SkitGen() {
       let data;
 
       if (withFeedback && result) {
-        const currentScript = parseResult(result).script || result;
+        // Pass the whole stored result through (JSON or legacy plaintext) —
+        // see buildRefinePrompt: the model is asked to always return the
+        // current JSON schema, so this also upgrades a legacy-format saved
+        // script the moment it's refined.
         data = await apiGenerate("refine", {
-          originalScript: currentScript,
+          originalResult: result,
           feedback,
           dna: comedyDNA,
           selectedMode: lastModeUsed,
@@ -833,7 +1061,13 @@ export default function SkitGen() {
   };
 
   const openSavedScript = (item) => {
-    setResult(typeof item.result === "string" ? item.result : item.result?.script || "");
+    // item.result comes back from /api/saved already JSON.parse()'d into the
+    // full schema object (mode/premise/characters/beats/script/shot_list/
+    // ending/caption/hashtags) when it was saved in that format. `result`
+    // state is always a string here (parseResult() parses it on demand), so
+    // re-stringify the object rather than reducing it to just `.script` —
+    // that was silently dropping Breakdown/Post on every saved skit.
+    setResult(typeof item.result === "string" ? item.result : JSON.stringify(item.result));
     setTopic(item.topic || "");
     setContext(item.context || "");
     if (item.format) setFormat(item.format);
@@ -1071,35 +1305,19 @@ export default function SkitGen() {
                   {parsed.style && <span style={S.chip}>{parsed.style}</span>}
                   {parsed.lang && <span style={S.chip}>{parsed.lang}</span>}
                   {lastModeUsed && <span style={{ ...S.chip, color: C.success, borderColor: "#1a3a1a" }}>{lastModeUsed}</span>}
-                  {lastUsage && formatTokenUsage(lastUsage) && <span style={{ ...S.chip, color: C.textMuted }}>{formatTokenUsage(lastUsage)}</span>}
+                  {parsed.filming_difficulty && <span style={S.chip}>📹 {parsed.filming_difficulty}</span>}
                 </div>
 
                 {parsed.script && (
-                  <div style={{ ...S.card, marginTop: "4px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
-                      <span style={{ fontSize: "12px", letterSpacing: "1.5px", color: C.textMuted, fontWeight: 700 }}>YOUR SKIT</span>
-                      <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
-                        <GhostButton onClick={() => copyScript(parsed.script)} style={{ color: copied ? C.success : C.textMuted }}>
-                          {copied ? "copied ✓" : "copy"}
-                        </GhostButton>
-                        <button
-                          onClick={saveCurrentScript}
-                          disabled={savingScript || savedThisResult}
-                          style={{
-                            padding: "6px 13px", borderRadius: "8px",
-                            border: `1px solid ${savedThisResult ? C.success : C.border}`,
-                            background: savedThisResult ? `${C.success}15` : "transparent",
-                            color: savedThisResult ? C.success : C.textMuted,
-                            fontSize: "12px", fontWeight: 600, cursor: savingScript || savedThisResult ? "default" : "pointer",
-                            fontFamily: "inherit", transition: "all 0.15s",
-                          }}
-                        >
-                          {savedThisResult ? "✓ saved" : savingScript ? "saving…" : "save"}
-                        </button>
-                      </div>
-                    </div>
-                    <ScriptBody text={parsed.script} />
-                  </div>
+                  <SoloResultTabs
+                    parsed={parsed}
+                    usage={lastUsage}
+                    copied={copied}
+                    onCopy={copyScript}
+                    onSave={saveCurrentScript}
+                    saving={savingScript}
+                    saved={savedThisResult}
+                  />
                 )}
 
                 {parsed.script && (

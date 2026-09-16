@@ -539,12 +539,46 @@ function ResultCard({ result, onRefine, refining, onSave, saved, onAvoid, avoidS
 // ─── SAVED PANEL ───────────────────────────────────────────────────────────
 
 function SavedPanel({ ideas, onOpen, onDelete, onClose }) {
+  // Delete is destructive and irreversible (hits DELETE /api/couple/saved/[id]
+  // straight away), so it's gated behind a confirm dialog instead of firing
+  // on a single tap — mirrors Solo's SavedPanel (app/page.js).
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const confirmItem = ideas.find((i) => i.id === confirmDeleteId) || null;
+
   return (
-    <div style={{
-      position: "fixed", top: 0, right: 0, bottom: 0, width: "min(380px, 100vw)",
-      background: C.white, border: "1px solid var(--border-soft)",
-      zIndex: 200, display: "flex", flexDirection: "column",
-    }}>
+    <>
+      <div
+        onClick={onClose}
+        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 199 }}
+      />
+      {confirmItem && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+          <div onClick={() => setConfirmDeleteId(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)" }} />
+          <div style={{ position: "relative", background: C.white, border: `1px solid ${C.border}`, borderRadius: "12px", padding: "20px", width: "min(320px, 100%)" }}>
+            <div style={{ fontSize: "15px", fontWeight: 800, color: C.dark, marginBottom: "8px" }}>Delete this idea?</div>
+            <div style={{ fontSize: "13px", color: C.muted, marginBottom: "18px", lineHeight: 1.5 }}>
+              “{confirmItem.result?.title || "Untitled"}” will be permanently deleted. This can't be undone.
+            </div>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button onClick={() => setConfirmDeleteId(null)} style={{ flex: 1, padding: "10px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "transparent", color: C.mid, fontSize: "13px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+              <button
+                onClick={() => { onDelete(confirmDeleteId); setConfirmDeleteId(null); }}
+                style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "none", background: "#f0575f", color: "#fff", fontSize: "13px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      <div style={{
+        position: "fixed", top: 0, right: 0, bottom: 0, width: "min(380px, 100vw)",
+        background: C.white, border: "1px solid var(--border-soft)",
+        zIndex: 200, display: "flex", flexDirection: "column",
+        paddingTop: "env(safe-area-inset-top)",
+        paddingRight: "env(safe-area-inset-right)",
+        paddingBottom: "env(safe-area-inset-bottom)",
+      }}>
       <div style={{ padding: "16px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
         <div style={{ fontSize: "15px", fontWeight: 800, color: C.dark }}>Saved Ideas ({ideas.length})</div>
         <button onClick={onClose} style={{ background: "none", border: "none", fontSize: "22px", cursor: "pointer", color: C.muted, lineHeight: 1 }}>×</button>
@@ -561,12 +595,13 @@ function SavedPanel({ ideas, onOpen, onDelete, onClose }) {
             <div style={{ display: "flex", gap: "8px" }}>
               <button onClick={() => onOpen(idea)} style={{ flex: 1, padding: "8px", borderRadius: "8px", border: "none", background: C.pink, color: C.ink, fontSize: "12px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Open</button>
               <CopyBtn text={idea.result?.script || ""} />
-              <button onClick={() => onDelete(idea.id)} style={{ padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.white, color: C.muted, fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}>Delete</button>
+              <button onClick={() => setConfirmDeleteId(idea.id)} style={{ padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.white, color: C.muted, fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}>Delete</button>
             </div>
           </div>
         ))}
       </div>
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -1554,6 +1589,7 @@ export default function CoupleContentGeneratorPage() {
       const ai = await callAPI("vibe", {
         situation: situation.trim(),
         vibes: vibeOptions,
+        dna: dnaProfile,
       });
       const parsed = ai.data;
       const match = parsed?.vibeId && VIBES.find(v => v.id === parsed.vibeId);
@@ -1585,6 +1621,7 @@ export default function CoupleContentGeneratorPage() {
         formatLabel: formatObj?.label,
         formatDesc: formatObj?.desc,
         creativeDna,
+        dna: dnaProfile,
       });
       const parsed = ai.data;
       if (parsed?.tone) setToneNoteSuggestion({ tone: parsed.tone, reason: parsed.reason || null });

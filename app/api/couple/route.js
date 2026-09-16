@@ -5,14 +5,12 @@
 import { safeJSONParse } from "@/lib/gemini";
 import { callAI } from "@/lib/ai";
 import {
-  COUPLE_COMEDY_PROFILE,
-  COUPLE_COMEDY_VERIFIER,
+  buildCoupleComedyProfile,
   buildCoupleIdeaPrompt,
   buildCoupleVibePrompt,
   buildCoupleTonePrompt,
   buildCoupleScriptPrompt,
   buildCoupleRefinePrompt,
-  buildCoupleVerificationPrompt,
   buildCoupleSampleAnalysisPrompt,
   buildCoupleDNASynthesisPrompt,
   buildCoupleDNAUpdatePrompt,
@@ -66,11 +64,11 @@ export async function POST(req) {
       }
 
       case "vibe": {
-        const { situation, vibes } = body;
+        const { situation, vibes, dna } = body;
         if (!String(situation || "").trim()) return Response.json({ error: "situation is required" }, { status: 400 });
         const ai = await callAI({
           provider,
-          prompt: buildCoupleVibePrompt(String(situation).trim(), String(vibes || "")),
+          prompt: buildCoupleVibePrompt(String(situation).trim(), String(vibes || ""), dna),
           maxTokens: 220,
           options: { lite: true, temperature: 0.2 },
         });
@@ -79,10 +77,10 @@ export async function POST(req) {
       }
 
       case "tone": {
-        const { situation, formatLabel, formatDesc, creativeDna = "" } = body;
+        const { situation, formatLabel, formatDesc, creativeDna = "", dna } = body;
         const ai = await callAI({
           provider,
-          prompt: buildCoupleTonePrompt(String(situation || "").trim(), formatLabel, formatDesc, creativeDna),
+          prompt: buildCoupleTonePrompt(String(situation || "").trim(), formatLabel, formatDesc, creativeDna, dna),
           maxTokens: 220,
           options: { lite: true, temperature: 0.3 },
         });
@@ -93,39 +91,24 @@ export async function POST(req) {
       case "script": {
         const prompt = buildCoupleScriptPrompt(body);
         const scriptTokenBudget = body.formatLabel === "Text Overlay" ? 1800 : 3200;
-        const draftAI = await callAI({
+        const ai = await callAI({
           provider,
-          system: COUPLE_COMEDY_PROFILE,
+          system: buildCoupleComedyProfile(body.dna),
           prompt,
           maxTokens: scriptTokenBudget,
           options: { temperature: 0.9, ...modelOption },
         });
-        const text = draftAI.text;
-        const verifyTokenBudget = Math.max(500, Math.round(scriptTokenBudget * 0.7));
-        const verifiedAI = await callAI({
-          provider,
-          system: COUPLE_COMEDY_VERIFIER,
-          prompt: buildCoupleVerificationPrompt(text, prompt, body.avoidNotes || []),
-          maxTokens: verifyTokenBudget,
-          options: { temperature: 0.3, retries: 2, ...modelOption },
-        });
-        const verified = safeJSONParse(verifiedAI.text);
-        const finalText = verified ? JSON.stringify(verified) : text;
-        return Response.json({
-          text: finalText,
-          usage: {
-            inputTokens: (draftAI.usage?.inputTokens || 0) + (verifiedAI.usage?.inputTokens || 0),
-            outputTokens: (draftAI.usage?.outputTokens || 0) + (verifiedAI.usage?.outputTokens || 0),
-            totalTokens: (draftAI.usage?.totalTokens || 0) + (verifiedAI.usage?.totalTokens || 0),
-          },
-        });
+        const parsed = safeJSONParse(ai.text);
+        // Validate the model response locally, but never send the draft through
+        // a second creative model pass that could normalize or override learned DNA.
+        return Response.json({ text: parsed ? JSON.stringify(parsed) : ai.text, usage: ai.usage });
       }
 
       case "refine": {
         const { originalResult, feedback, dna } = body;
         const ai = await callAI({
           provider,
-          system: COUPLE_COMEDY_PROFILE,
+          system: buildCoupleComedyProfile(dna),
           prompt: buildCoupleRefinePrompt(originalResult, feedback, dna),
           maxTokens: 3000,
           options: { temperature: 0.78, ...modelOption },

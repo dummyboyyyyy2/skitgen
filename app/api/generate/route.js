@@ -1,8 +1,7 @@
 import { safeJSONParse } from "@/lib/gemini";
 import { callAI, DEFAULT_PROVIDER, isValidProvider } from "@/lib/ai";
 import {
-  COMEDY_PROFILE,
-  COMEDY_VERIFIER,
+  buildComedyProfile,
   buildIdeaPrompt,
   buildTonePrompt,
   buildRefinePrompt,
@@ -11,16 +10,9 @@ import {
   buildDNAUpdatePrompt,
   buildScriptPrompt,
   buildAvoidNotePrompt,
-  buildScriptVerificationPrompt,
 } from "@/lib/prompts";
 
 export const runtime = "nodejs";
-// Script generation now makes two sequential calls (draft + verification), so
-// this needs more headroom than a single-call route. 90s comfortably covers
-// both at the largest per-format token budgets below on a slow provider day.
-// Note: if you're on Vercel's Hobby plan, function duration is capped at 60s
-// regardless of this value — bump to Pro (or trim VERIFY_TOKEN_FRACTION below
-// further) if you see timeouts on Rant/Skit.
 export const maxDuration = 90;
 
 // SHARED-ARCHITECTURE RULE: Solo and Couple should keep equivalent pipeline mechanics.
@@ -72,37 +64,17 @@ export async function POST(req) {
         const { formatLabel, formatDesc, topic, context, suggestedTone, dna, avoidNotes = [], voiceClips = [] } = body;
         const prompt = buildScriptPrompt(formatLabel, formatDesc, topic, context, suggestedTone, dna, avoidNotes, voiceClips);
         const scriptTokenBudget = {
-          "One-Liner": 700,
-          "POV": 1800,
-          "Character Bit": 2200,
+          "One-Liner": 500,
+          "Text Overlay": 1500,
           "Roast": 1800,
-          "Commentary": 2200,
           "Skit": 3000,
           "Rant": 3200,
         }[formatLabel] || 2400;
-        const draftAI = await callAI({ provider, system: COMEDY_PROFILE, prompt, maxTokens: scriptTokenBudget, options: { temperature: 0.9, ...modelOption } });
-        const text = draftAI.text;
-        // The verification pass repairs, it doesn't extend — a fixed-up script
-        // is never meaningfully longer than the draft it started from. Capping
-        // its budget below the draft's own keeps the two-call round trip well
-        // inside maxDuration instead of letting a repair run as long as a
-        // fresh generation would.
-        const verifyTokenBudget = Math.max(500, Math.round(scriptTokenBudget * 0.7));
-        const verifiedAI = await callAI({
-          provider,
-          system: COMEDY_VERIFIER,
-          prompt: buildScriptVerificationPrompt(text, avoidNotes, prompt),
-          maxTokens: verifyTokenBudget,
-          options: { temperature: 0.3, retries: 2, ...modelOption },
-        });
-        return Response.json({
-          result: verifiedAI.text || text,
-          usage: {
-            inputTokens: (draftAI.usage?.inputTokens || 0) + (verifiedAI.usage?.inputTokens || 0),
-            outputTokens: (draftAI.usage?.outputTokens || 0) + (verifiedAI.usage?.outputTokens || 0),
-            totalTokens: (draftAI.usage?.totalTokens || 0) + (verifiedAI.usage?.totalTokens || 0),
-          },
-        });
+        const ai = await callAI({ provider, system: buildComedyProfile(dna), prompt, maxTokens: scriptTokenBudget, options: { temperature: 0.9, ...modelOption } });
+        const parsed = safeJSONParse(ai.text);
+        // Validate the model response locally, but never send the draft through
+        // a second creative model pass that could normalize or override learned DNA.
+        return Response.json({ result: parsed ? JSON.stringify(parsed) : ai.text, usage: ai.usage });
       }
 
       case "distillAvoidNote": {
@@ -114,10 +86,12 @@ export async function POST(req) {
       }
 
       case "refine": {
-        const { originalScript, feedback, dna, selectedMode } = body;
-        const prompt = buildRefinePrompt(originalScript, feedback, dna, selectedMode);
-        const ai = await callAI({ provider, system: COMEDY_PROFILE, prompt, maxTokens: 2600, options: { temperature: 0.78, ...modelOption } });
-        return Response.json({ result: ai.text, usage: ai.usage });
+        const { originalResult, feedback, dna, selectedMode } = body;
+        const prompt = buildRefinePrompt(originalResult, feedback, dna, selectedMode);
+        const ai = await callAI({ provider, system: buildComedyProfile(dna), prompt, maxTokens: 2600, options: { temperature: 0.78, ...modelOption } });
+        // Same repair-with-fallback pattern as "script" above.
+        const refined = safeJSONParse(ai.text);
+        return Response.json({ result: refined ? JSON.stringify(refined) : ai.text, usage: ai.usage });
       }
 
       case "analyzeSample": {
