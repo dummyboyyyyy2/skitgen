@@ -1,5 +1,6 @@
 import { safeJSONParse } from "@/lib/gemini";
 import { callAI, DEFAULT_PROVIDER, isValidProvider } from "@/lib/ai";
+import { getSoloGeminiKey } from "@/lib/geminiKeys";
 import {
   buildComedyProfile,
   buildIdeaPrompt,
@@ -46,14 +47,14 @@ export async function POST(req) {
         // Ideas used to run on the lite model tier — cheaper/faster, but a
         // meaningfully weaker model than the one that actually writes scripts.
         // Idea quality/voice-fit matters too much here to keep that tradeoff.
-        const ai = await callAI({ provider, prompt: buildIdeaPrompt(formatLabel, formatDesc, dna, avoidNotes), maxTokens: 900, options: { temperature: 0.8, json: true } });
+        const ai = await callAI({ provider, prompt: buildIdeaPrompt(formatLabel, formatDesc, dna, avoidNotes), maxTokens: 900, options: { temperature: 0.8, json: true, apiKey: getSoloGeminiKey("ideas") } });
         const parsed = safeJSONParse(ai.text, []);
         return Response.json({ ideas: Array.isArray(parsed) ? parsed : [], usage: ai.usage });
       }
 
       case "tone": {
         const { topic, formatLabel, formatDesc, dna } = body;
-        const ai = await callAI({ provider, prompt: buildTonePrompt(topic, formatLabel, formatDesc, dna), maxTokens: 250, options: { lite: true, temperature: 0.2 } });
+        const ai = await callAI({ provider, prompt: buildTonePrompt(topic, formatLabel, formatDesc, dna), maxTokens: 250, options: { lite: true, temperature: 0.2, apiKey: getSoloGeminiKey("tone") } });
         const parsed = safeJSONParse(ai.text);
         return Response.json({ tone: parsed?.tone || null, reason: parsed?.reason || null, usage: ai.usage });
       }
@@ -70,7 +71,7 @@ export async function POST(req) {
           "Skit": 3000,
           "Rant": 3200,
         }[formatLabel] || 2400;
-        const ai = await callAI({ provider, system: buildComedyProfile(dna), prompt, maxTokens: scriptTokenBudget, options: { temperature: 0.9, ...modelOption } });
+        const ai = await callAI({ provider, system: buildComedyProfile(dna), prompt, maxTokens: scriptTokenBudget, options: { temperature: 0.9, ...modelOption, apiKey: getSoloGeminiKey("script") } });
         const parsed = safeJSONParse(ai.text);
         // Validate the model response locally, but never send the draft through
         // a second creative model pass that could normalize or override learned DNA.
@@ -81,14 +82,14 @@ export async function POST(req) {
         const { script, reason = "" } = body;
         if (!script || !String(script).trim()) return Response.json({ error: "script is required" }, { status: 400 });
         const prompt = buildAvoidNotePrompt(String(script), String(reason || ""));
-        const ai = await callAI({ provider, prompt, maxTokens: 120, options: { lite: true, temperature: 0.15 } });
+        const ai = await callAI({ provider, prompt, maxTokens: 120, options: { lite: true, temperature: 0.15, apiKey: getSoloGeminiKey("distillAvoidNote") } });
         return Response.json({ note: String(ai.text || "").trim(), usage: ai.usage });
       }
 
       case "refine": {
         const { originalResult, feedback, dna, selectedMode } = body;
         const prompt = buildRefinePrompt(originalResult, feedback, dna, selectedMode);
-        const ai = await callAI({ provider, system: buildComedyProfile(dna), prompt, maxTokens: 2600, options: { temperature: 0.78, ...modelOption } });
+        const ai = await callAI({ provider, system: buildComedyProfile(dna), prompt, maxTokens: 2600, options: { temperature: 0.78, ...modelOption, apiKey: getSoloGeminiKey("refine") } });
         // Same repair-with-fallback pattern as "script" above.
         const refined = safeJSONParse(ai.text);
         return Response.json({ result: refined ? JSON.stringify(refined) : ai.text, usage: ai.usage });
@@ -103,7 +104,7 @@ export async function POST(req) {
           content.length > MAX_SAMPLE_CHARS
             ? content.slice(0, MAX_SAMPLE_CHARS) + "\n\n[...truncated for analysis, sample exceeded length cap...]"
             : content;
-        const ai = await callAI({ provider, prompt: buildSampleAnalysisPrompt(trimmedContent, title, formatLabel, formatDesc), maxTokens: 1800, options: { temperature: 0.2 } });
+        const ai = await callAI({ provider, prompt: buildSampleAnalysisPrompt(trimmedContent, title, formatLabel, formatDesc), maxTokens: 1800, options: { temperature: 0.2, apiKey: getSoloGeminiKey("analyzeSample") } });
         const parsed = safeJSONParse(ai.text);
         if (!parsed) return Response.json({ error: "Couldn't parse the analysis. Try reanalyzing this sample." }, { status: 422 });
         return Response.json({ analysis: parsed, usage: ai.usage });
@@ -112,7 +113,7 @@ export async function POST(req) {
       case "synthesizeDNA": {
         const { analyses, baseProfileSummary } = body;
         const prompt = buildDNASynthesisPrompt(analyses, baseProfileSummary);
-        const ai = await callAI({ provider, prompt, maxTokens: 4000, options: { temperature: 0.2 } });
+        const ai = await callAI({ provider, prompt, maxTokens: 4000, options: { temperature: 0.2, apiKey: getSoloGeminiKey("synthesizeDNA") } });
         const parsed = safeJSONParse(ai.text);
         if (!parsed) return Response.json({ error: "Couldn't parse the DNA synthesis response." }, { status: 422 });
         return Response.json({ dna: parsed, usage: ai.usage });
@@ -123,7 +124,7 @@ export async function POST(req) {
         // NEW samples' analyses, not the full analyzed corpus. Much cheaper per rebuild.
         const { existingDNA, newAnalyses } = body;
         const prompt = buildDNAUpdatePrompt(existingDNA, newAnalyses);
-        const ai = await callAI({ provider, prompt, maxTokens: 4000, options: { temperature: 0.2 } });
+        const ai = await callAI({ provider, prompt, maxTokens: 4000, options: { temperature: 0.2, apiKey: getSoloGeminiKey("updateDNA") } });
         const parsed = safeJSONParse(ai.text);
         if (!parsed) return Response.json({ error: "Couldn't parse the DNA update response." }, { status: 422 });
         return Response.json({ dna: parsed, usage: ai.usage });

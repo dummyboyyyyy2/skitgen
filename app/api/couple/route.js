@@ -4,6 +4,7 @@
 
 import { safeJSONParse } from "@/lib/gemini";
 import { callAI } from "@/lib/ai";
+import { getCoupleGeminiKey } from "@/lib/geminiKeys";
 import {
   buildCoupleComedyProfile,
   buildCoupleIdeaPrompt,
@@ -57,7 +58,7 @@ export async function POST(req) {
           provider,
           prompt: buildCoupleIdeaPrompt(formatLabel, formatDesc, dna, avoidNotes),
           maxTokens: 900,
-          options: { temperature: 0.85, json: true },
+          options: { temperature: 0.85, json: true, apiKey: getCoupleGeminiKey("ideas") },
         });
         const parsed = safeJSONParse(ai.text, []);
         return Response.json({ ideas: Array.isArray(parsed) ? parsed : [], usage: ai.usage });
@@ -70,7 +71,7 @@ export async function POST(req) {
           provider,
           prompt: buildCoupleVibePrompt(String(situation).trim(), String(vibes || ""), dna),
           maxTokens: 220,
-          options: { lite: true, temperature: 0.2 },
+          options: { lite: true, temperature: 0.2, apiKey: getCoupleGeminiKey("vibe") },
         });
         const parsed = safeJSONParse(ai.text);
         return Response.json({ vibeId: parsed?.vibeId || null, reason: parsed?.reason || null, usage: ai.usage });
@@ -82,7 +83,7 @@ export async function POST(req) {
           provider,
           prompt: buildCoupleTonePrompt(String(situation || "").trim(), formatLabel, formatDesc, creativeDna, dna),
           maxTokens: 220,
-          options: { lite: true, temperature: 0.3 },
+          options: { lite: true, temperature: 0.3, apiKey: getCoupleGeminiKey("tone") },
         });
         const parsed = safeJSONParse(ai.text);
         return Response.json({ tone: parsed?.tone || null, reason: parsed?.reason || null, usage: ai.usage });
@@ -96,7 +97,7 @@ export async function POST(req) {
           system: buildCoupleComedyProfile(body.dna),
           prompt,
           maxTokens: scriptTokenBudget,
-          options: { temperature: 0.9, ...modelOption },
+          options: { temperature: 0.9, ...modelOption, apiKey: getCoupleGeminiKey("script") },
         });
         const parsed = safeJSONParse(ai.text);
         // Validate the model response locally, but never send the draft through
@@ -111,7 +112,7 @@ export async function POST(req) {
           system: buildCoupleComedyProfile(dna),
           prompt: buildCoupleRefinePrompt(originalResult, feedback, dna),
           maxTokens: 3000,
-          options: { temperature: 0.78, ...modelOption },
+          options: { temperature: 0.78, ...modelOption, apiKey: getCoupleGeminiKey("refine") },
         });
         return Response.json({ text: ai.text, usage: ai.usage });
       }
@@ -125,7 +126,7 @@ export async function POST(req) {
           provider,
           prompt: buildCoupleSampleAnalysisPrompt(trimmed, body.title, body.sampleType, body.formatLabel, body.formatDesc),
           maxTokens: 1800,
-          options: { temperature: 0.2 },
+          options: { temperature: 0.2, apiKey: getCoupleGeminiKey("analyzeSample") },
         });
         const parsed = safeJSONParse(ai.text);
         if (!parsed) return Response.json({ error: "Couldn't parse the Couple Comedy DNA analysis. Try reanalyzing this sample." }, { status: 422 });
@@ -137,7 +138,7 @@ export async function POST(req) {
           provider,
           prompt: buildCoupleDNASynthesisPrompt(body.analyses || []),
           maxTokens: 4000,
-          options: { temperature: 0.2 },
+          options: { temperature: 0.2, apiKey: getCoupleGeminiKey("synthesizeDNA") },
         });
         const parsed = safeJSONParse(ai.text);
         if (!parsed) return Response.json({ error: "Couldn't parse the Couple Comedy DNA synthesis response." }, { status: 422 });
@@ -149,7 +150,7 @@ export async function POST(req) {
           provider,
           prompt: buildCoupleDNAUpdatePrompt(body.existingDNA, body.newAnalyses || []),
           maxTokens: 4000,
-          options: { temperature: 0.2 },
+          options: { temperature: 0.2, apiKey: getCoupleGeminiKey("updateDNA") },
         });
         const parsed = safeJSONParse(ai.text);
         if (!parsed) return Response.json({ error: "Couldn't parse the Couple Comedy DNA update response." }, { status: 422 });
@@ -162,7 +163,7 @@ export async function POST(req) {
           provider,
           prompt: buildCoupleAvoidNotePrompt(String(body.script), String(body.reason || "")),
           maxTokens: 120,
-          options: { lite: true, temperature: 0.15 },
+          options: { lite: true, temperature: 0.15, apiKey: getCoupleGeminiKey("distillAvoidNote") },
         });
         return Response.json({ note: String(ai.text || "").trim(), usage: ai.usage });
       }
