@@ -302,7 +302,7 @@ function CopyBtn({ text }) {
 
 // ─── RESULT CARD ──────────────────────────────────────────────────────────
 
-function ResultCard({ result, onRefine, refining, onSave, saved, onAvoid, avoidSubmitting, usage }) {
+function ResultCard({ result, onRefine, refining, onSave, saved, onAvoid, avoidSubmitting, usage, readOnly = false }) {
   const [tab, setTab] = useState("script");
   const [showAvoid, setShowAvoid] = useState(false);
   const [avoidReason, setAvoidReason] = useState("");
@@ -334,12 +334,12 @@ function ResultCard({ result, onRefine, refining, onSave, saved, onAvoid, avoidS
           <div style={{ display: "flex", gap: "6px", flexShrink: 0, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
             {usage && formatTokenUsage(usage) && <span style={{ fontSize: "10px", color: C.muted, border: `1px solid ${C.border}`, borderRadius: "999px", padding: "4px 8px", whiteSpace: "nowrap" }}>{formatTokenUsage(usage)}</span>}
             <CopyBtn text={tabText[tab]} />
-            <button onClick={onSave} style={{
+            <button onClick={readOnly ? undefined : onSave} disabled={readOnly} style={{
               padding: "5px 12px", borderRadius: "8px",
               border: `1px solid ${saved ? C.green : C.border}`,
               background: saved ? `${C.green}15` : C.white,
               color: saved ? C.green : C.muted,
-              fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
+              fontSize: "11px", fontWeight: 600, cursor: readOnly ? "default" : "pointer", fontFamily: "inherit", transition: "all 0.15s",
             }}>{saved ? "✓ Saved" : "Save"}</button>
           </div>
         </div>
@@ -461,6 +461,8 @@ function ResultCard({ result, onRefine, refining, onSave, saved, onAvoid, avoidS
         )}
       </div>
 
+      {!readOnly && (
+      <>
       {/* Negative feedback / Avoid */}
       {tab === "script" && (
         <div style={{ padding: "0 18px 14px" }}>
@@ -532,76 +534,82 @@ function ResultCard({ result, onRefine, refining, onSave, saved, onAvoid, avoidS
           {refining ? "Rewriting ···" : "✦ Rewrite"}
         </button>
       </div>
+      </>
+      )}
     </div>
   );
 }
 
-// ─── SAVED PANEL ───────────────────────────────────────────────────────────
+// ─── SAVED VIEW ────────────────────────────────────────────────────────────
 
-function SavedPanel({ ideas, onOpen, onDelete, onClose }) {
-  // Delete is destructive and irreversible (hits DELETE /api/couple/saved/[id]
-  // straight away), so it's gated behind a confirm dialog instead of firing
-  // on a single tap — mirrors Solo's SavedPanel (app/page.js).
+// Full-page list of Couple ideas, mirroring Solo's SavedView. Opening an item
+// keeps the user inside the Saved tab and never writes the saved idea back into
+// the Generator fields. The generator state therefore remains exactly as the
+// user left it.
+function SavedView({ ideas, openedItem, onOpen, onCloseDetail, onDelete }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const confirmItem = ideas.find((i) => i.id === confirmDeleteId) || null;
 
+  const confirmDialog = confirmItem && (
+    <div style={{ position: "fixed", inset: 0, zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+      <div onClick={() => setConfirmDeleteId(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)" }} />
+      <div style={{ position: "relative", background: C.white, border: `1px solid ${C.border}`, borderRadius: "12px", padding: "20px", width: "min(320px, 100%)" }}>
+        <div style={{ fontSize: "15px", fontWeight: 800, color: C.dark, marginBottom: "8px" }}>Delete this idea?</div>
+        <div style={{ fontSize: "13px", color: C.muted, marginBottom: "18px", lineHeight: 1.5 }}>
+          “{confirmItem.result?.title || "Untitled"}” will be permanently deleted. This can't be undone.
+        </div>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button onClick={() => setConfirmDeleteId(null)} style={{ flex: 1, padding: "10px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "transparent", color: C.mid, fontSize: "13px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          <button onClick={() => { onDelete(confirmDeleteId); setConfirmDeleteId(null); }} style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "none", background: "#f0575f", color: "#fff", fontSize: "13px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Delete</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (openedItem) {
+    const result = typeof openedItem.result === "string" ? (() => { try { return JSON.parse(openedItem.result); } catch { return {}; } })() : (openedItem.result || {});
+    return (
+      <div style={{ marginTop: "8px" }}>
+        {confirmDialog}
+        <button onClick={onCloseDetail} style={{ background: "none", border: "none", padding: 0, marginBottom: "16px", fontSize: "13px", fontWeight: 700, color: C.muted, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: "6px" }}>
+          ← Back to Saved
+        </button>
+        <ResultCard
+          result={result}
+          onRefine={() => {}}
+          refining={false}
+          onSave={() => {}}
+          saved={true}
+          onAvoid={() => {}}
+          avoidSubmitting={false}
+          usage={null}
+          readOnly
+        />
+        <button onClick={() => setConfirmDeleteId(openedItem.id)} style={{ padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.white, color: C.muted, fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}>Delete this idea</button>
+      </div>
+    );
+  }
+
   return (
-    <>
-      <div
-        onClick={onClose}
-        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 199 }}
-      />
-      {confirmItem && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
-          <div onClick={() => setConfirmDeleteId(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)" }} />
-          <div style={{ position: "relative", background: C.white, border: `1px solid ${C.border}`, borderRadius: "12px", padding: "20px", width: "min(320px, 100%)" }}>
-            <div style={{ fontSize: "15px", fontWeight: 800, color: C.dark, marginBottom: "8px" }}>Delete this idea?</div>
-            <div style={{ fontSize: "13px", color: C.muted, marginBottom: "18px", lineHeight: 1.5 }}>
-              “{confirmItem.result?.title || "Untitled"}” will be permanently deleted. This can't be undone.
-            </div>
-            <div style={{ display: "flex", gap: "8px" }}>
-              <button onClick={() => setConfirmDeleteId(null)} style={{ flex: 1, padding: "10px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "transparent", color: C.mid, fontSize: "13px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-              <button
-                onClick={() => { onDelete(confirmDeleteId); setConfirmDeleteId(null); }}
-                style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "none", background: "#f0575f", color: "#fff", fontSize: "13px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
-              >
-                Delete
-              </button>
-            </div>
+    <div style={{ marginTop: "8px" }}>
+      {confirmDialog}
+      <div style={{ fontSize: "15px", fontWeight: 800, color: C.dark, marginBottom: "16px" }}>Saved Ideas ({ideas.length})</div>
+      {ideas.length === 0 ? (
+        <div style={{ padding: "40px 0", textAlign: "center", color: C.muted, fontSize: "14px" }}>
+          No saved ideas yet.<br />Generate and save one!
+        </div>
+      ) : ideas.map((idea) => (
+        <div key={idea.id} style={{ background: C.white, border: `1px solid var(--border-soft)`, borderRadius: "10px", padding: "14px", marginBottom: "10px" }}>
+          <div style={{ fontSize: "14px", fontWeight: 700, color: C.dark, marginBottom: "4px" }}>{idea.result?.title || "Untitled"}</div>
+          <div style={{ fontSize: "12px", color: C.muted, marginBottom: "12px", lineHeight: 1.5 }}>{idea.result?.premise || ""}</div>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button onClick={() => onOpen(idea)} style={{ flex: 1, padding: "8px", borderRadius: "8px", border: "none", background: C.pink, color: C.ink, fontSize: "12px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Open</button>
+            <CopyBtn text={idea.result?.script || ""} />
+            <button onClick={() => setConfirmDeleteId(idea.id)} style={{ padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.white, color: C.muted, fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}>Delete</button>
           </div>
         </div>
-      )}
-      <div style={{
-        position: "fixed", top: 0, right: 0, bottom: 0, width: "min(380px, 100vw)",
-        background: C.white, border: "1px solid var(--border-soft)",
-        zIndex: 200, display: "flex", flexDirection: "column",
-        paddingTop: "env(safe-area-inset-top)",
-        paddingRight: "env(safe-area-inset-right)",
-        paddingBottom: "env(safe-area-inset-bottom)",
-      }}>
-      <div style={{ padding: "16px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-        <div style={{ fontSize: "15px", fontWeight: 800, color: C.dark }}>Saved Ideas ({ideas.length})</div>
-        <button onClick={onClose} style={{ background: "none", border: "none", fontSize: "22px", cursor: "pointer", color: C.muted, lineHeight: 1 }}>×</button>
-      </div>
-      <div style={{ overflowY: "auto", flex: 1, padding: "12px" }}>
-        {ideas.length === 0 ? (
-          <div style={{ padding: "40px 0", textAlign: "center", color: C.muted, fontSize: "14px" }}>
-            No saved ideas yet.<br />Generate and save one!
-          </div>
-        ) : ideas.map(idea => (
-          <div key={idea.id} style={{ background: C.bg, borderRadius: "8px", padding: "14px", marginBottom: "10px" }}>
-            <div style={{ fontSize: "14px", fontWeight: 700, color: C.dark, marginBottom: "4px" }}>{idea.result?.title || "Untitled"}</div>
-            <div style={{ fontSize: "12px", color: C.muted, marginBottom: "12px", lineHeight: 1.5 }}>{idea.result?.premise || ""}</div>
-            <div style={{ display: "flex", gap: "8px" }}>
-              <button onClick={() => onOpen(idea)} style={{ flex: 1, padding: "8px", borderRadius: "8px", border: "none", background: C.pink, color: C.ink, fontSize: "12px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Open</button>
-              <CopyBtn text={idea.result?.script || ""} />
-              <button onClick={() => setConfirmDeleteId(idea.id)} style={{ padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.white, color: C.muted, fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}>Delete</button>
-            </div>
-          </div>
-        ))}
-      </div>
-      </div>
-    </>
+      ))}
+    </div>
   );
 }
 
@@ -1494,7 +1502,7 @@ export default function CoupleContentGeneratorPage() {
   const [refining, setRefining] = useState(false);
 
   const [savedIdeas, setSavedIdeas] = useState([]);
-  const [savedOpen, setSavedOpen] = useState(false);
+  const [openedSavedItem, setOpenedSavedItem] = useState(null);
   const [savedThisResult, setSavedThisResult] = useState(false);
 
   const [view, setView] = useState("generator");
@@ -1717,16 +1725,15 @@ export default function CoupleContentGeneratorPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || "Failed to delete idea.");
       setSavedIdeas(prev => prev.filter(x => x.id !== id));
+      setOpenedSavedItem(prev => (prev && prev.id === id ? null : prev));
     } catch (e) { setErr(e.message || "Failed to delete idea."); }
   };
 
   const openIdea = (idea) => {
-    setResult(idea.result);
-    setSituation(idea.situation || "");
-    setVibe(idea.vibe || null);
-    setFormat(idea.format || "acted-skit");
-    setSavedOpen(false);
-    setSavedThisResult(true);
+    // Opening a saved idea stays inside Saved and does not repopulate the
+    // Generator's situation, vibe, format, or current generated result.
+    setOpenedSavedItem(idea);
+    setView("saved");
   };
 
   const togglePersonality = (id) => {
@@ -1755,8 +1762,6 @@ export default function CoupleContentGeneratorPage() {
       `}</style>
 
 
-      {savedOpen && <SavedPanel ideas={savedIdeas} onOpen={openIdea} onDelete={deleteIdea} onClose={() => setSavedOpen(false)} />}
-
       {/* Header */}
       <div className="header-shell" style={{ background: C.white, borderBottom: `1px solid ${C.border}`, padding: "24px 28px 0", position: "sticky", top: 0, zIndex: 100 }}>
         {/* Global Solo/Couple mode switcher — the page-specific tabs
@@ -1777,11 +1782,11 @@ export default function CoupleContentGeneratorPage() {
           ].map(([id, label]) => (
             <button
               key={id}
-              onClick={() => id === "saved" ? setSavedOpen(true) : setView(id)}
+              onClick={() => { if (id !== "saved") setOpenedSavedItem(null); setView(id); }}
               style={{
                 padding: "12px 18px", minHeight: "44px", background: "transparent", border: "none",
-                borderBottom: (id === "saved" ? savedOpen : view === id) ? `2px solid ${C.pink}` : "2px solid transparent",
-                color: (id === "saved" ? savedOpen : view === id) ? C.dark : C.muted, fontSize: "12px", fontWeight: "700",
+                borderBottom: view === id ? `2px solid ${C.pink}` : "2px solid transparent",
+                color: view === id ? C.dark : C.muted, fontSize: "12px", fontWeight: "700",
                 letterSpacing: "1.5px", cursor: "pointer", fontFamily: "inherit", transition: "all 0.2s",
               }}
             >
@@ -1795,6 +1800,17 @@ export default function CoupleContentGeneratorPage() {
       {view === "dna" && (
         <DnaTrainer dnaProfile={dnaProfile} onProfileUpdate={(p) => setDnaProfile(p)} avoidNotes={avoidNotes} deleteAvoidNote={deleteAvoidNote} />
       )}
+
+      {/* Saved View */}
+      {view === "saved" && <div style={{ maxWidth: "1080px", margin: "0 auto", padding: "16px" }}>
+        <SavedView
+          ideas={savedIdeas}
+          openedItem={openedSavedItem}
+          onOpen={openIdea}
+          onCloseDetail={() => setOpenedSavedItem(null)}
+          onDelete={deleteIdea}
+        />
+      </div>}
 
       {/* Generator View */}
       {view === "generator" && <div style={{ maxWidth: "1080px", margin: "0 auto", padding: "16px" }}>

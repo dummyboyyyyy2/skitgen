@@ -184,7 +184,7 @@ const copyToClipboard = (text, onDone) => {
 
 // Pulls the structured pieces (mode/style/language/script/closing line) out
 // of the raw AI response text. Lives at module scope (not just inside the
-// main component) so SavedPanel and the save/open/copy handlers can reuse it
+// main component) so SavedView and the save/open/copy handlers can reuse it
 // on saved skits without re-deriving their own copy of the same regexes.
 // Parses a stored/generated result string into a display object. Two
 // formats can show up here:
@@ -516,17 +516,16 @@ function SoloResultTabs({ parsed, usage, copied, onCopy, onSave, saving, saved }
   );
 }
 
-// Slide-out list of skits the user has explicitly saved. Mirrors Couple's
-// SavedPanel (app/couples/page.js) — same layout, same Open/Copy/Delete
-// actions — but backed by the `scripts` table via /api/saved.
+// Full-page list of skits the user has explicitly saved, rendered inline in
+// page-shell alongside the Generate/Comedy DNA views (it used to be a
+// slide-out modal panel — now it's a proper third tab). Backed by the
+// `scripts` table via /api/saved.
 //
-// Includes a dimming backdrop (tap to close) so this reads as a modal
-// instead of a drawer awkwardly sharing the screen with the still-live
-// Generate view behind it, plus safe-area padding on the panel itself —
-// header-shell/page-shell handle that elsewhere in the app, but this panel
-// isn't wrapped in either, so on notched/rounded-corner phones its content
-// was sitting flush against the edge.
-function SavedPanel({ scripts, onOpen, onCopy, onDelete, onClose }) {
+// Opening an item shows its full script/breakdown/post right here (via
+// SoloResultTabs) instead of jumping back to the Generate tab and
+// overwriting whatever's in the generator fields — `openedItem` just tracks
+// which saved skit (if any) is currently expanded.
+function SavedView({ scripts, openedItem, onOpen, onCloseDetail, onCopy, onCopyText, copied, onDelete }) {
   // Delete is destructive and irreversible (hits DELETE /api/saved/[id]
   // straight away), so it's gated behind a confirm dialog instead of firing
   // on a single tap — this state just tracks which item id (if any) is
@@ -534,68 +533,88 @@ function SavedPanel({ scripts, onOpen, onCopy, onDelete, onClose }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const confirmItem = scripts.find((s) => s.id === confirmDeleteId) || null;
 
+  const confirmDialog = confirmItem && (
+    <div style={{ position: "fixed", inset: 0, zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+      <div onClick={() => setConfirmDeleteId(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)" }} />
+      <div style={{ position: "relative", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: "12px", padding: "20px", width: "min(320px, 100%)" }}>
+        <div style={{ fontSize: "15px", fontWeight: 800, color: "#fff", marginBottom: "8px" }}>Delete this skit?</div>
+        <div style={{ fontSize: "13px", color: C.textMuted, marginBottom: "18px", lineHeight: 1.5 }}>
+          “{confirmItem.topic || "Untitled"}” will be permanently deleted. This can't be undone.
+        </div>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button onClick={() => setConfirmDeleteId(null)} style={{ flex: 1, padding: "10px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "transparent", color: C.textSecondary, fontSize: "13px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          <button
+            onClick={() => { onDelete(confirmDeleteId); setConfirmDeleteId(null); }}
+            style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "none", background: C.danger, color: "#fff", fontSize: "13px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (openedItem) {
+    const parsed = typeof openedItem.result === "string" ? parseResult(openedItem.result) : parseResult(JSON.stringify(openedItem.result));
+    return (
+      <div style={S.section}>
+        {confirmDialog}
+        <button
+          onClick={onCloseDetail}
+          style={{ background: "none", border: "none", padding: 0, marginBottom: "16px", fontSize: "13px", fontWeight: 700, color: C.textMuted, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: "6px" }}
+        >
+          ← Back to Saved
+        </button>
+        <div style={{ fontSize: "16px", fontWeight: 800, color: "#fff", marginBottom: "4px" }}>{openedItem.topic || "Untitled"}</div>
+        <div style={{ display: "flex", gap: "7px", flexWrap: "wrap", marginBottom: "12px" }}>
+          {parsed.style && <span style={S.chip}>{parsed.style}</span>}
+          {parsed.lang && <span style={S.chip}>{parsed.lang}</span>}
+          {openedItem.modeUsed && <span style={{ ...S.chip, color: C.success, borderColor: "#1a3a1a" }}>{openedItem.modeUsed}</span>}
+          {parsed.filming_difficulty && <span style={S.chip}>📹 {parsed.filming_difficulty}</span>}
+        </div>
+        {parsed.script && (
+          <SoloResultTabs
+            parsed={parsed}
+            usage={null}
+            copied={copied}
+            onCopy={onCopyText}
+            onSave={() => {}}
+            saving={false}
+            saved={true}
+          />
+        )}
+        <div style={{ marginTop: "12px" }}>
+          <button onClick={() => setConfirmDeleteId(openedItem.id)} style={{ padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "transparent", color: C.textMuted, fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}>Delete this skit</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <>
-      <div
-        onClick={onClose}
-        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 199 }}
-      />
-      {confirmItem && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
-          <div onClick={() => setConfirmDeleteId(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)" }} />
-          <div style={{ position: "relative", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: "12px", padding: "20px", width: "min(320px, 100%)" }}>
-            <div style={{ fontSize: "15px", fontWeight: 800, color: "#fff", marginBottom: "8px" }}>Delete this skit?</div>
-            <div style={{ fontSize: "13px", color: C.textMuted, marginBottom: "18px", lineHeight: 1.5 }}>
-              “{confirmItem.topic || "Untitled"}” will be permanently deleted. This can't be undone.
+    <div style={S.section}>
+      {confirmDialog}
+      <div style={{ fontSize: "15px", fontWeight: 800, color: "#fff", marginBottom: "16px" }}>Saved Skits ({scripts.length})</div>
+      {scripts.length === 0 ? (
+        <div style={{ padding: "40px 0", textAlign: "center", color: C.textMuted, fontSize: "14px" }}>
+          No saved skits yet.<br />Generate and save one!
+        </div>
+      ) : scripts.map((item) => {
+        const script = typeof item.result === "string" ? parseResult(item.result).script : (item.result?.script || "");
+        return (
+          <div key={item.id} style={{ background: C.surface1, border: `1px solid ${C.borderSoft}`, borderRadius: "8px", padding: "14px", marginBottom: "10px" }}>
+            <div style={{ fontSize: "14px", fontWeight: 700, color: "#eee", marginBottom: "4px" }}>{item.topic || "Untitled"}</div>
+            <div style={{ fontSize: "12px", color: C.textMuted, marginBottom: "12px", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+              {script.slice(0, 140)}{script.length > 140 ? "…" : ""}
             </div>
             <div style={{ display: "flex", gap: "8px" }}>
-              <button onClick={() => setConfirmDeleteId(null)} style={{ flex: 1, padding: "10px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "transparent", color: C.textSecondary, fontSize: "13px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-              <button
-                onClick={() => { onDelete(confirmDeleteId); setConfirmDeleteId(null); }}
-                style={{ flex: 1, padding: "10px", borderRadius: "8px", border: "none", background: C.danger, color: "#fff", fontSize: "13px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
-              >
-                Delete
-              </button>
+              <button onClick={() => onOpen(item)} style={{ flex: 1, padding: "8px", borderRadius: "8px", border: "none", background: C.accent, color: "#1a1200", fontSize: "12px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Open</button>
+              <button onClick={() => onCopy(item)} style={{ padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "transparent", color: C.textSecondary, fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}>Copy</button>
+              <button onClick={() => setConfirmDeleteId(item.id)} style={{ padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "transparent", color: C.textMuted, fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}>Delete</button>
             </div>
           </div>
-        </div>
-      )}
-      <div style={{
-        position: "fixed", top: 0, right: 0, bottom: 0, width: "min(380px, 100vw)",
-        background: C.surface2, borderLeft: `1px solid ${C.border}`,
-        zIndex: 200, display: "flex", flexDirection: "column",
-        paddingTop: "env(safe-area-inset-top)",
-        paddingRight: "env(safe-area-inset-right)",
-        paddingBottom: "env(safe-area-inset-bottom)",
-      }}>
-      <div style={{ padding: "16px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-        <div style={{ fontSize: "15px", fontWeight: 800, color: "#fff" }}>Saved Skits ({scripts.length})</div>
-        <button onClick={onClose} style={{ background: "none", border: "none", fontSize: "22px", cursor: "pointer", color: C.textMuted, lineHeight: 1 }}>×</button>
-      </div>
-      <div style={{ overflowY: "auto", flex: 1, padding: "12px" }}>
-        {scripts.length === 0 ? (
-          <div style={{ padding: "40px 0", textAlign: "center", color: C.textMuted, fontSize: "14px" }}>
-            No saved skits yet.<br />Generate and save one!
-          </div>
-        ) : scripts.map((item) => {
-          const script = typeof item.result === "string" ? parseResult(item.result).script : (item.result?.script || "");
-          return (
-            <div key={item.id} style={{ background: C.surface1, border: `1px solid ${C.borderSoft}`, borderRadius: "8px", padding: "14px", marginBottom: "10px" }}>
-              <div style={{ fontSize: "14px", fontWeight: 700, color: "#eee", marginBottom: "4px" }}>{item.topic || "Untitled"}</div>
-              <div style={{ fontSize: "12px", color: C.textMuted, marginBottom: "12px", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
-                {script.slice(0, 140)}{script.length > 140 ? "…" : ""}
-              </div>
-              <div style={{ display: "flex", gap: "8px" }}>
-                <button onClick={() => onOpen(item)} style={{ flex: 1, padding: "8px", borderRadius: "8px", border: "none", background: C.accent, color: "#1a1200", fontSize: "12px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Open</button>
-                <button onClick={() => onCopy(item)} style={{ padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "transparent", color: C.textSecondary, fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}>Copy</button>
-                <button onClick={() => setConfirmDeleteId(item.id)} style={{ padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: "transparent", color: C.textMuted, fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}>Delete</button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      </div>
-    </>
+        );
+      })}
+    </div>
   );
 }
 
@@ -638,7 +657,7 @@ export default function SkitGen() {
   const [showFeedback, setShowFeedback] = useState(false);
 
   const [savedScripts, setSavedScripts] = useState([]);
-  const [savedOpen, setSavedOpen] = useState(false);
+  const [openedSavedItem, setOpenedSavedItem] = useState(null);
   const [savedThisResult, setSavedThisResult] = useState(false);
   const [savingScript, setSavingScript] = useState(false);
 
@@ -1061,19 +1080,11 @@ export default function SkitGen() {
   };
 
   const openSavedScript = (item) => {
-    // item.result comes back from /api/saved already JSON.parse()'d into the
-    // full schema object (mode/premise/characters/beats/script/shot_list/
-    // ending/caption/hashtags) when it was saved in that format. `result`
-    // state is always a string here (parseResult() parses it on demand), so
-    // re-stringify the object rather than reducing it to just `.script` —
-    // that was silently dropping Breakdown/Post on every saved skit.
-    setResult(typeof item.result === "string" ? item.result : JSON.stringify(item.result));
-    setTopic(item.topic || "");
-    setContext(item.context || "");
-    if (item.format) setFormat(item.format);
-    setLastModeUsed(item.modeUsed || null);
-    setSavedThisResult(true);
-    setSavedOpen(false);
+    // Opening a saved skit shows it right there in the Saved tab (see
+    // SavedView's detail mode below) — it no longer touches the Generate
+    // tab's topic/context/format/result state, so the generator fields stay
+    // exactly as the user left them and the user stays on the Saved page.
+    setOpenedSavedItem(item);
   };
 
   const copySavedScript = (item) => {
@@ -1081,10 +1092,18 @@ export default function SkitGen() {
     copyToClipboard(text || "");
   };
 
+  const copySavedScriptText = (text) => {
+    copyToClipboard(text, () => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
   const deleteSavedScript = async (id) => {
     try {
       await apiDeleteSaved(id);
       setSavedScripts((prev) => prev.filter((s) => s.id !== id));
+      setOpenedSavedItem((prev) => (prev && prev.id === id ? null : prev));
     } catch (err) {
       setError(err?.message || "Failed to delete saved skit.");
     }
@@ -1111,16 +1130,6 @@ export default function SkitGen() {
   return (
     <div style={S.page}>
 
-      {savedOpen && (
-        <SavedPanel
-          scripts={savedScripts}
-          onOpen={openSavedScript}
-          onCopy={copySavedScript}
-          onDelete={deleteSavedScript}
-          onClose={() => setSavedOpen(false)}
-        />
-      )}
-
       <div className="header-shell" style={{ padding: "24px 28px 0", borderBottom: `1px solid ${C.borderSoft}` }}>
         {/* Global Solo/Couple mode switcher — page-specific tabs (GENERATE /
             COMEDY DNA / SAVED) stay below, unaffected. Separate app, separate
@@ -1145,11 +1154,11 @@ export default function SkitGen() {
           {[["generate", "GENERATE"], ["dna", "COMEDY DNA"], ["saved", `SAVED${savedScripts.length > 0 ? ` (${savedScripts.length})` : ""}`]].map(([id, label]) => (
             <button
               key={id}
-              onClick={() => id === "saved" ? setSavedOpen(true) : setView(id)}
+              onClick={() => { if (id !== "saved") setOpenedSavedItem(null); setView(id); }}
               style={{
                 padding: "12px 18px", minHeight: "44px", background: "transparent", border: "none",
-                borderBottom: (id === "saved" ? savedOpen : view === id) ? `2px solid ${C.accent}` : "2px solid transparent",
-                color: (id === "saved" ? savedOpen : view === id) ? "#fff" : C.textFaint, fontSize: "12px", fontWeight: "700",
+                borderBottom: view === id ? `2px solid ${C.accent}` : "2px solid transparent",
+                color: view === id ? "#fff" : C.textFaint, fontSize: "12px", fontWeight: "700",
                 letterSpacing: "1.5px", cursor: "pointer", fontFamily: "inherit", transition: "all 0.2s",
               }}
             >
@@ -1391,6 +1400,17 @@ export default function SkitGen() {
               </div>
             )}
           </>
+        ) : view === "saved" ? (
+          <SavedView
+            scripts={savedScripts}
+            openedItem={openedSavedItem}
+            onOpen={openSavedScript}
+            onCloseDetail={() => setOpenedSavedItem(null)}
+            onCopy={copySavedScript}
+            onCopyText={copySavedScriptText}
+            copied={copied}
+            onDelete={deleteSavedScript}
+          />
         ) : (
           <ComedyDNAView
             samples={samples}
