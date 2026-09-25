@@ -3,7 +3,7 @@
 // route, database table, and output remains Couple-specific.
 
 import { safeJSONParse } from "@/lib/gemini";
-import { callAI } from "@/lib/ai";
+import { callAI, callAIWithFallback } from "@/lib/ai";
 import { getCoupleGeminiKey } from "@/lib/geminiKeys";
 import {
   buildCoupleComedyProfile,
@@ -57,11 +57,12 @@ export async function POST(req) {
         // 900 -> 1500 -> 2500: same truncation-causes-silent-[] failure as
         // Solo, worst on narrative formats like Skit whose premises run
         // longer per idea than short formats like Text Overlay.
-        const ai = await callAI({
+        const ai = await callAIWithFallback({
           provider,
           prompt: buildCoupleIdeaPrompt(formatLabel, formatDesc, dna, avoidNotes, recentPremises, scenario),
           maxTokens: 2500,
           options: { temperature: 0.85, json: true, apiKey: getCoupleGeminiKey("ideas") },
+          actionLabel: "ideas/couple",
         });
         const parsed = safeJSONParse(ai.text, []);
         const truncated = ai.finishReason === "MAX_TOKENS" && !Array.isArray(parsed);
@@ -72,11 +73,12 @@ export async function POST(req) {
       case "vibe": {
         const { situation, vibes, dna } = body;
         if (!String(situation || "").trim()) return Response.json({ error: "situation is required" }, { status: 400 });
-        const ai = await callAI({
+        const ai = await callAIWithFallback({
           provider,
           prompt: buildCoupleVibePrompt(String(situation).trim(), String(vibes || ""), dna),
           maxTokens: 220,
           options: { lite: true, temperature: 0.2, apiKey: getCoupleGeminiKey("vibe") },
+          actionLabel: "vibe/couple",
         });
         const parsed = safeJSONParse(ai.text);
         return Response.json({ vibeId: parsed?.vibeId || null, reason: parsed?.reason || null, usage: ai.usage });
@@ -84,11 +86,12 @@ export async function POST(req) {
 
       case "tone": {
         const { situation, formatLabel, formatDesc, creativeDna = "", dna } = body;
-        const ai = await callAI({
+        const ai = await callAIWithFallback({
           provider,
           prompt: buildCoupleTonePrompt(String(situation || "").trim(), formatLabel, formatDesc, creativeDna, dna),
           maxTokens: 220,
           options: { lite: true, temperature: 0.3, apiKey: getCoupleGeminiKey("tone") },
+          actionLabel: "tone/couple",
         });
         const parsed = safeJSONParse(ai.text);
         return Response.json({ tone: parsed?.tone || null, reason: parsed?.reason || null, usage: ai.usage });
@@ -127,11 +130,12 @@ export async function POST(req) {
         const trimmed = content.length > 6000
           ? content.slice(0, 6000) + "\n\n[...truncated for analysis, sample exceeded length cap...]"
           : content;
-        const ai = await callAI({
+        const ai = await callAIWithFallback({
           provider,
           prompt: buildCoupleSampleAnalysisPrompt(trimmed, body.title, body.sampleType, body.formatLabel, body.formatDesc),
           maxTokens: 1800,
           options: { temperature: 0.2, apiKey: getCoupleGeminiKey("analyzeSample") },
+          actionLabel: "analyzeSample/couple",
         });
         const parsed = safeJSONParse(ai.text);
         if (!parsed) return Response.json({ error: "Couldn't parse the Couple Comedy DNA analysis. Try reanalyzing this sample." }, { status: 422 });
@@ -143,11 +147,12 @@ export async function POST(req) {
         // cap (MAX_TRAINING_SAMPLES in app/couples/page.js) without truncating
         // mid-JSON; json:true structurally guarantees a parseable response instead
         // of relying on the prompt alone. Mirrors Solo's /api/generate fix.
-        const ai = await callAI({
+        const ai = await callAIWithFallback({
           provider,
           prompt: buildCoupleDNASynthesisPrompt(body.analyses || []),
           maxTokens: 8000,
           options: { temperature: 0.2, json: true, apiKey: getCoupleGeminiKey("synthesizeDNA") },
+          actionLabel: "synthesizeDNA/couple",
         });
         const parsed = safeJSONParse(ai.text);
         if (!parsed) return Response.json({ error: "Couldn't parse the Couple Comedy DNA synthesis response." }, { status: 422 });
@@ -157,11 +162,12 @@ export async function POST(req) {
       case "updateDNA": {
         // Same headroom bump as synthesizeDNA above — the response echoes the FULL
         // merged DNA object back, which grows with corpus size (up to 20 samples).
-        const ai = await callAI({
+        const ai = await callAIWithFallback({
           provider,
           prompt: buildCoupleDNAUpdatePrompt(body.existingDNA, body.newAnalyses || []),
           maxTokens: 8000,
           options: { temperature: 0.2, json: true, apiKey: getCoupleGeminiKey("updateDNA") },
+          actionLabel: "updateDNA/couple",
         });
         const parsed = safeJSONParse(ai.text);
         if (!parsed) return Response.json({ error: "Couldn't parse the Couple Comedy DNA update response." }, { status: 422 });

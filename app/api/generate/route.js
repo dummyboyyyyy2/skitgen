@@ -1,5 +1,5 @@
 import { safeJSONParse } from "@/lib/gemini";
-import { callAI, DEFAULT_PROVIDER, isValidProvider } from "@/lib/ai";
+import { callAI, callAIWithFallback, DEFAULT_PROVIDER, isValidProvider } from "@/lib/ai";
 import { getSoloGeminiKey } from "@/lib/geminiKeys";
 import {
   buildComedyProfile,
@@ -52,7 +52,7 @@ export async function POST(req) {
         // ideas" (a parse failure here returns [] instead of an error) — hit
         // hardest on narrative formats like Skit, whose premises run much
         // longer per idea than short formats like Text Overlay.
-        const ai = await callAI({ provider, prompt: buildIdeaPrompt(formatLabel, formatDesc, dna, avoidNotes, recentPremises, scenario), maxTokens: 2500, options: { temperature: 0.8, json: true, apiKey: getSoloGeminiKey("ideas") } });
+        const ai = await callAIWithFallback({ provider, prompt: buildIdeaPrompt(formatLabel, formatDesc, dna, avoidNotes, recentPremises, scenario), maxTokens: 2500, options: { temperature: 0.8, json: true, apiKey: getSoloGeminiKey("ideas") }, actionLabel: "ideas/solo" });
         const parsed = safeJSONParse(ai.text, []);
         const truncated = ai.finishReason === "MAX_TOKENS" && !Array.isArray(parsed);
         if (truncated) console.warn(`[ideas/solo] truncated response for format="${formatLabel}" — empty result masked a real cutoff, not a genuine "no ideas".`);
@@ -61,7 +61,7 @@ export async function POST(req) {
 
       case "tone": {
         const { topic, formatLabel, formatDesc, dna } = body;
-        const ai = await callAI({ provider, prompt: buildTonePrompt(topic, formatLabel, formatDesc, dna), maxTokens: 250, options: { lite: true, temperature: 0.2, apiKey: getSoloGeminiKey("tone") } });
+        const ai = await callAIWithFallback({ provider, prompt: buildTonePrompt(topic, formatLabel, formatDesc, dna), maxTokens: 250, options: { lite: true, temperature: 0.2, apiKey: getSoloGeminiKey("tone") }, actionLabel: "tone/solo" });
         const parsed = safeJSONParse(ai.text);
         return Response.json({ tone: parsed?.tone || null, reason: parsed?.reason || null, usage: ai.usage });
       }
@@ -111,7 +111,7 @@ export async function POST(req) {
           content.length > MAX_SAMPLE_CHARS
             ? content.slice(0, MAX_SAMPLE_CHARS) + "\n\n[...truncated for analysis, sample exceeded length cap...]"
             : content;
-        const ai = await callAI({ provider, prompt: buildSampleAnalysisPrompt(trimmedContent, title, formatLabel, formatDesc), maxTokens: 1800, options: { temperature: 0.2, apiKey: getSoloGeminiKey("analyzeSample") } });
+        const ai = await callAIWithFallback({ provider, prompt: buildSampleAnalysisPrompt(trimmedContent, title, formatLabel, formatDesc), maxTokens: 1800, options: { temperature: 0.2, apiKey: getSoloGeminiKey("analyzeSample") }, actionLabel: "analyzeSample/solo" });
         const parsed = safeJSONParse(ai.text);
         if (!parsed) return Response.json({ error: "Couldn't parse the analysis. Try reanalyzing this sample." }, { status: 422 });
         return Response.json({ analysis: parsed, usage: ai.usage });
@@ -124,7 +124,7 @@ export async function POST(req) {
         // evidence (bigger instinct/mode/avoid-pattern arrays) without truncating
         // mid-JSON; json:true structurally guarantees a parseable response instead
         // of relying on the prompt alone.
-        const ai = await callAI({ provider, prompt, maxTokens: 8000, options: { temperature: 0.2, json: true, apiKey: getSoloGeminiKey("synthesizeDNA") } });
+        const ai = await callAIWithFallback({ provider, prompt, maxTokens: 8000, options: { temperature: 0.2, json: true, apiKey: getSoloGeminiKey("synthesizeDNA") }, actionLabel: "synthesizeDNA/solo" });
         const parsed = safeJSONParse(ai.text);
         if (!parsed) return Response.json({ error: "Couldn't parse the DNA synthesis response." }, { status: 422 });
         return Response.json({ dna: parsed, usage: ai.usage });
@@ -137,7 +137,7 @@ export async function POST(req) {
         const prompt = buildDNAUpdatePrompt(existingDNA, newAnalyses);
         // Same headroom bump as synthesizeDNA above — the response echoes the FULL
         // merged DNA object back, which grows with corpus size (up to ~20 samples).
-        const ai = await callAI({ provider, prompt, maxTokens: 8000, options: { temperature: 0.2, json: true, apiKey: getSoloGeminiKey("updateDNA") } });
+        const ai = await callAIWithFallback({ provider, prompt, maxTokens: 8000, options: { temperature: 0.2, json: true, apiKey: getSoloGeminiKey("updateDNA") }, actionLabel: "updateDNA/solo" });
         const parsed = safeJSONParse(ai.text);
         if (!parsed) return Response.json({ error: "Couldn't parse the DNA update response." }, { status: 422 });
         return Response.json({ dna: parsed, usage: ai.usage });
