@@ -785,11 +785,11 @@ function DnaTrainer({ dnaProfile, onProfileUpdate, avoidNotes = [], deleteAvoidN
     } catch (e) { setErr(e.message || "Failed to delete sample."); }
   };
 
-  const dnaAction = async (payload, maxTokens = 1800) => {
+  const dnaAction = async (payload) => {
     const res = await fetch("/api/couple", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...payload, maxTokens }),
+      body: JSON.stringify(payload),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -813,7 +813,7 @@ function DnaTrainer({ dnaProfile, onProfileUpdate, avoidNotes = [], deleteAvoidN
         sampleType: sample.type,
         formatLabel: formatObj?.label || null,
         formatDesc: formatObj?.desc || null,
-      }, 1800);
+      });
       const patchRes = await fetch(`/api/couple/samples/${encodeURIComponent(sample.id)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -956,8 +956,8 @@ function DnaTrainer({ dnaProfile, onProfileUpdate, avoidNotes = [], deleteAvoidN
         : `Updating Comedy DNA with ${newSamples.length} new sample${newSamples.length === 1 ? "" : "s"}...`);
 
       const data = forceFull
-        ? await dnaAction({ action: "synthesizeDNA", analyses }, 4000)
-        : await dnaAction({ action: "updateDNA", existingDNA: dnaProfile, newAnalyses: analyses }, 4000);
+        ? await dnaAction({ action: "synthesizeDNA", analyses })
+        : await dnaAction({ action: "updateDNA", existingDNA: dnaProfile, newAnalyses: analyses });
 
       const coveredIds = forceFull
         ? ready.map(s => s.id)

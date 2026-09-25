@@ -54,15 +54,19 @@ export async function POST(req) {
         const { formatLabel, formatDesc, dna, avoidNotes = [], recentPremises = [], scenario = "" } = body;
         // Mirrors Solo's fix: ideas used to run on the lite model tier, a
         // meaningfully weaker model than the one that writes actual scripts.
-        // 900 -> 1500: same truncation-causes-silent-[] failure as Solo.
+        // 900 -> 1500 -> 2500: same truncation-causes-silent-[] failure as
+        // Solo, worst on narrative formats like Skit whose premises run
+        // longer per idea than short formats like Text Overlay.
         const ai = await callAI({
           provider,
           prompt: buildCoupleIdeaPrompt(formatLabel, formatDesc, dna, avoidNotes, recentPremises, scenario),
-          maxTokens: 1500,
+          maxTokens: 2500,
           options: { temperature: 0.85, json: true, apiKey: getCoupleGeminiKey("ideas") },
         });
         const parsed = safeJSONParse(ai.text, []);
-        return Response.json({ ideas: Array.isArray(parsed) ? parsed : [], usage: ai.usage });
+        const truncated = ai.finishReason === "MAX_TOKENS" && !Array.isArray(parsed);
+        if (truncated) console.warn(`[ideas/couple] truncated response for format="${formatLabel}" — empty result masked a real cutoff, not a genuine "no ideas".`);
+        return Response.json({ ideas: Array.isArray(parsed) ? parsed : [], usage: ai.usage, ...(truncated ? { truncated: true } : {}) });
       }
 
       case "vibe": {

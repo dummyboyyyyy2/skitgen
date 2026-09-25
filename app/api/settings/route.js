@@ -5,7 +5,14 @@
 // — so this is safe to deploy before anyone has ever changed a toggle.
 
 import { sql } from "@/lib/db";
-import { DEFAULT_PROVIDER, isValidProvider } from "@/lib/ai";
+import { DEFAULT_PROVIDER } from "@/lib/ai";
+
+// This legacy toggle only ever meant "Gemini vs Anthropic" for full
+// generation and predates OpenRouter/task-based routing. Validate against
+// that original scope directly rather than lib/ai.js's isValidProvider,
+// which now also accepts "openrouter" — a value this table was never
+// designed to hold and that the main generation flows don't read from here.
+const isValidLegacyProvider = (value) => value === "gemini" || value === "anthropic";
 
 export const runtime = "nodejs";
 
@@ -30,7 +37,7 @@ export async function POST(req) {
     if (app !== "solo" && app !== "couple") {
       return Response.json({ error: 'app must be "solo" or "couple".' }, { status: 400 });
     }
-    if (!isValidProvider(provider)) {
+    if (!isValidLegacyProvider(provider)) {
       return Response.json({ error: 'provider must be "gemini" or "anthropic".' }, { status: 400 });
     }
 
